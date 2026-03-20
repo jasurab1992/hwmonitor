@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	ioctlATAPassThroughDirect = 0x4D034
+	ioctlATAPassThroughDirect = 0x4D028
 	ataSmartCmd               = 0xB0
 	smartReadData             = 0xD0
 )
@@ -20,7 +20,7 @@ const (
 const (
 	smartAttrReallocatedSectors = 5
 	smartAttrPowerOnHours       = 9
-	smartAttrPowerCycles        = 12
+	smartAttrSpinRetries        = 10
 	smartAttrTemperature190     = 190
 	smartAttrTemperature194     = 194
 	smartAttrPendingSectors     = 197
@@ -71,7 +71,7 @@ func (s *SMARTCollector) Name() string {
 func (s *SMARTCollector) Collect() ([]Metric, error) {
 	var metrics []Metric
 
-	for i := 0; i < 8; i++ {
+	for i := 0; i < 16; i++ {
 		drivePath := fmt.Sprintf(`\\.\PhysicalDrive%d`, i)
 		m, err := collectSMARTDrive(drivePath)
 		if err != nil {
@@ -122,8 +122,8 @@ func collectSMARTDrive(drivePath string) ([]Metric, error) {
 	// CurrentTaskFile layout: [Features, SectorCount, LbaLow, LbaMid, LbaHigh, Device, Command, Reserved]
 	apt.CurrentTaskFile[0] = smartReadData  // Features = SMART_READ_DATA
 	apt.CurrentTaskFile[1] = 1             // Sector count
-	apt.CurrentTaskFile[4] = 0x4F          // LbaMid = 0x4F (SMART signature)
-	apt.CurrentTaskFile[5] = 0xC2          // LbaHigh = 0xC2 (SMART signature)
+	apt.CurrentTaskFile[3] = 0x4F          // LbaMid = 0x4F (SMART signature)
+	apt.CurrentTaskFile[4] = 0xC2          // LbaHigh = 0xC2 (SMART signature)
 	apt.CurrentTaskFile[6] = ataSmartCmd   // Command = 0xB0
 
 	var bytesReturned uint32
@@ -165,9 +165,9 @@ func collectSMARTDrive(drivePath string) ([]Metric, error) {
 		case smartAttrTemperature194, smartAttrTemperature190:
 			if !temperatureFound {
 				metrics = append(metrics, Metric{
-					Name:   "smart_temperature_celsius",
+					Name:   "smart_temp_celsius",
 					Value:  float64(rawLow & 0xFF),
-					Labels: map[string]string{"device": drivePath},
+					Labels: map[string]string{"drive": drivePath},
 				})
 				temperatureFound = true
 			}
@@ -175,25 +175,25 @@ func collectSMARTDrive(drivePath string) ([]Metric, error) {
 			metrics = append(metrics, Metric{
 				Name:   "smart_reallocated_sectors",
 				Value:  float64(rawLow),
-				Labels: map[string]string{"device": drivePath},
+				Labels: map[string]string{"drive": drivePath},
 			})
 		case smartAttrPendingSectors:
 			metrics = append(metrics, Metric{
 				Name:   "smart_pending_sectors",
 				Value:  float64(rawLow),
-				Labels: map[string]string{"device": drivePath},
+				Labels: map[string]string{"drive": drivePath},
 			})
 		case smartAttrPowerOnHours:
 			metrics = append(metrics, Metric{
 				Name:   "smart_power_on_hours",
 				Value:  float64(rawLow),
-				Labels: map[string]string{"device": drivePath},
+				Labels: map[string]string{"drive": drivePath},
 			})
-		case smartAttrPowerCycles:
+		case smartAttrSpinRetries:
 			metrics = append(metrics, Metric{
-				Name:   "smart_power_cycles",
+				Name:   "smart_spin_retries",
 				Value:  float64(rawLow),
-				Labels: map[string]string{"device": drivePath},
+				Labels: map[string]string{"drive": drivePath},
 			})
 		}
 	}
