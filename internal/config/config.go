@@ -9,10 +9,14 @@ import (
 
 // CollectorsConfig controls which collectors are enabled.
 type CollectorsConfig struct {
-	CPU    bool `yaml:"cpu"`
-	Memory bool `yaml:"memory"`
-	Disk   bool `yaml:"disk"`
-	NVMe   bool `yaml:"nvme"`
+	CPU     bool `yaml:"cpu"`
+	Memory  bool `yaml:"memory"`
+	Disk    bool `yaml:"disk"`
+	NVMe    bool `yaml:"nvme"`
+	CPUTemp bool `yaml:"cpu_temp"`
+	SMART   bool `yaml:"smart"`
+	Network bool `yaml:"network"`
+	SysInfo bool `yaml:"sysinfo"`
 }
 
 // Config holds the application configuration.
@@ -28,10 +32,14 @@ func DefaultConfig() *Config {
 		PrometheusPort:  9100,
 		CollectInterval: 5 * time.Second,
 		Collectors: CollectorsConfig{
-			CPU:    true,
-			Memory: true,
-			Disk:   true,
-			NVMe:   true,
+			CPU:     true,
+			Memory:  true,
+			Disk:    true,
+			NVMe:    true,
+			CPUTemp: true,
+			SMART:   true,
+			Network: true,
+			SysInfo: true,
 		},
 	}
 }

@@ -39,6 +39,18 @@ func main() {
 	if cfg.Collectors.NVMe {
 		colls = append(colls, collectors.NewNVMeCollector())
 	}
+	if cfg.Collectors.CPUTemp {
+		colls = append(colls, collectors.NewCPUTempCollector())
+	}
+	if cfg.Collectors.SMART {
+		colls = append(colls, collectors.NewSMARTCollector())
+	}
+	if cfg.Collectors.Network {
+		colls = append(colls, collectors.NewNetworkCollector())
+	}
+	if cfg.Collectors.SysInfo {
+		colls = append(colls, collectors.NewSysInfoCollector())
+	}
 
 	if len(colls) == 0 {
 		log.Fatal("no collectors enabled in config")
