@@ -23,23 +23,25 @@ func (c *CPUCollector) Name() string {
 func (c *CPUCollector) Collect() ([]Metric, error) {
 	var metrics []Metric
 
-	// Total CPU usage (average across all cores)
-	totalPercent, err := cpu.Percent(time.Second, false)
+	// Single call for per-core usage, then compute total as average
+	perCore, err := cpu.Percent(time.Second, true)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get total CPU usage: %w", err)
+		return nil, fmt.Errorf("failed to get CPU usage: %w", err)
 	}
-	if len(totalPercent) > 0 {
+
+	// Compute total as average of all cores
+	if len(perCore) > 0 {
+		var sum float64
+		for _, pct := range perCore {
+			sum += pct
+		}
 		metrics = append(metrics, Metric{
 			Name:  "cpu_usage_percent",
-			Value: totalPercent[0],
+			Value: sum / float64(len(perCore)),
 		})
 	}
 
-	// Per-core CPU usage
-	perCore, err := cpu.Percent(time.Second, true)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get per-core CPU usage: %w", err)
-	}
+	// Per-core metrics
 	for i, pct := range perCore {
 		metrics = append(metrics, Metric{
 			Name:  "cpu_core_usage_percent",

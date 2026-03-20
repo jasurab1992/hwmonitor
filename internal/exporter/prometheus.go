@@ -1,9 +1,11 @@
 package exporter
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net/http"
+	"sort"
 	"strings"
 
 	"hwmonitor/internal/collectors"
@@ -46,10 +48,14 @@ func (e *Exporter) Collect(ch chan<- prometheus.Metric) {
 
 		for _, m := range metrics {
 			labelNames := make([]string, 0, len(m.Labels))
-			labelValues := make([]string, 0, len(m.Labels))
-			for k, v := range m.Labels {
+			for k := range m.Labels {
 				labelNames = append(labelNames, k)
-				labelValues = append(labelValues, v)
+			}
+			sort.Strings(labelNames)
+
+			labelValues := make([]string, 0, len(labelNames))
+			for _, k := range labelNames {
+				labelValues = append(labelValues, m.Labels[k])
 			}
 
 			desc := prometheus.NewDesc(
@@ -75,8 +81,8 @@ func (e *Exporter) Collect(ch chan<- prometheus.Metric) {
 }
 
 // Start registers the exporter and starts the HTTP server on the configured port.
-// This method blocks until the server exits.
-func (e *Exporter) Start() error {
+// It blocks until the context is cancelled, then gracefully shuts down the server.
+func (e *Exporter) Start(ctx context.Context) error {
 	registry := prometheus.NewRegistry()
 	registry.MustRegister(e)
 
@@ -84,6 +90,21 @@ func (e *Exporter) Start() error {
 	mux.Handle("/metrics", promhttp.HandlerFor(registry, promhttp.HandlerOpts{}))
 
 	addr := fmt.Sprintf(":%d", e.port)
+	srv := &http.Server{
+		Addr:    addr,
+		Handler: mux,
+	}
+
+	go func() {
+		<-ctx.Done()
+		log.Println("Shutting down Prometheus exporter...")
+		srv.Shutdown(context.Background())
+	}()
+
 	log.Printf("Prometheus exporter listening on %s/metrics", addr)
-	return http.ListenAndServe(addr, mux)
+	err := srv.ListenAndServe()
+	if err == http.ErrServerClosed {
+		return nil
+	}
+	return err
 }

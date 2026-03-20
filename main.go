@@ -65,16 +65,14 @@ func main() {
 
 	case "exporter":
 		exp := exporter.NewExporter(colls, cfg.PrometheusPort)
-		log.Printf("Starting Prometheus exporter on :%d", cfg.PrometheusPort)
-		if err := exp.Start(); err != nil {
+		if err := exp.Start(ctx); err != nil {
 			log.Fatalf("exporter error: %v", err)
 		}
 
 	case "both":
 		exp := exporter.NewExporter(colls, cfg.PrometheusPort)
 		go func() {
-			log.Printf("Starting Prometheus exporter on :%d", cfg.PrometheusPort)
-			if err := exp.Start(); err != nil {
+			if err := exp.Start(ctx); err != nil {
 				log.Printf("exporter error: %v", err)
 				cancel()
 			}
