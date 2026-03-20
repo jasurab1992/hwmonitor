@@ -26,9 +26,10 @@ type win32BIOS struct {
 }
 
 type win32PhysicalMemory struct {
-	Capacity   uint64
-	Speed      uint32
-	MemoryType uint16
+	Capacity         uint64
+	Speed            uint32
+	MemoryType       uint16
+	SMBIOSMemoryType uint16
 }
 
 // SysInfoCollector collects static system information via WMI.
@@ -114,15 +115,19 @@ func (s *SysInfoCollector) Collect() ([]Metric, error) {
 
 	// RAM info
 	var mem []win32PhysicalMemory
-	if err := wmi.Query("SELECT Capacity, Speed, MemoryType FROM Win32_PhysicalMemory", &mem); err == nil {
+	if err := wmi.Query("SELECT Capacity, Speed, MemoryType, SMBIOSMemoryType FROM Win32_PhysicalMemory", &mem); err == nil {
 		for i, m := range mem {
+			memType := decodeMemoryType(m.MemoryType)
+			if memType == "Unknown" && m.SMBIOSMemoryType > 0 {
+				memType = decodeMemoryType(m.SMBIOSMemoryType)
+			}
 			metrics = append(metrics, Metric{
 				Name:  "sysinfo_memory_module_bytes",
 				Value: float64(m.Capacity),
 				Labels: map[string]string{
 					"slot":      fmt.Sprintf("%d", i),
 					"speed_mhz": fmt.Sprintf("%d", m.Speed),
-					"type":      decodeMemoryType(m.MemoryType),
+					"type":      memType,
 				},
 			})
 		}

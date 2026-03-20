@@ -424,7 +424,14 @@ func renderSATASmartSection(sb *strings.Builder, metrics []collectors.Metric) {
 	sb.WriteString(sectionHeader("SATA SMART"))
 
 	type smartInfo struct {
-		pctUsed, hours, readErr, writeErr float64
+		lifeRemaining    float64
+		hasLife          bool
+		hours            float64
+		hasHours         bool
+		reallocated      float64
+		hasReallocated   bool
+		pending          float64
+		hasPending       bool
 	}
 	devMap := make(map[string]*smartInfo)
 	for _, m := range metrics {
@@ -434,14 +441,18 @@ func renderSATASmartSection(sb *strings.Builder, metrics []collectors.Metric) {
 		}
 		info := devMap[dev]
 		switch m.Name {
-		case "smart_percentage_used":
-			info.pctUsed = m.Value
+		case "smart_life_remaining_percent":
+			info.lifeRemaining = m.Value
+			info.hasLife = true
 		case "smart_power_on_hours":
 			info.hours = m.Value
-		case "smart_read_errors_total":
-			info.readErr = m.Value
-		case "smart_write_errors_total":
-			info.writeErr = m.Value
+			info.hasHours = true
+		case "smart_reallocated_sectors":
+			info.reallocated = m.Value
+			info.hasReallocated = true
+		case "smart_pending_sectors":
+			info.pending = m.Value
+			info.hasPending = true
 		}
 	}
 
@@ -454,12 +465,26 @@ func renderSATASmartSection(sb *strings.Builder, metrics []collectors.Metric) {
 	for _, dev := range devs {
 		info := devMap[dev]
 		sb.WriteString(fmt.Sprintf("  %s%s%s\n", colorBold, dev, colorReset))
-		if info.pctUsed > 0 {
-			sb.WriteString(fmt.Sprintf("    Wear used:      %.0f%%\n", info.pctUsed))
+		if info.hasLife {
+			sb.WriteString(fmt.Sprintf("    Life remaining: %.0f%%\n", info.lifeRemaining))
 		}
-		sb.WriteString(fmt.Sprintf("    Power On Hours: %.0f h\n", info.hours))
-		sb.WriteString(fmt.Sprintf("    Read Errors:    %.0f\n", info.readErr))
-		sb.WriteString(fmt.Sprintf("    Write Errors:   %.0f\n", info.writeErr))
+		if info.hasHours {
+			sb.WriteString(fmt.Sprintf("    Power On Hours: %.0f h\n", info.hours))
+		}
+		if info.hasReallocated {
+			color := colorGreen
+			if info.reallocated > 0 {
+				color = colorYellow
+			}
+			sb.WriteString(fmt.Sprintf("    Reallocated:    %s%.0f%s sectors\n", color, info.reallocated, colorReset))
+		}
+		if info.hasPending {
+			color := colorGreen
+			if info.pending > 0 {
+				color = colorYellow
+			}
+			sb.WriteString(fmt.Sprintf("    Pending:        %s%.0f%s sectors\n", color, info.pending, colorReset))
+		}
 	}
 	sb.WriteString("\n")
 }

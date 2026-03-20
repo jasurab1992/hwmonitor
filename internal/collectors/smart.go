@@ -5,92 +5,87 @@ package collectors
 import (
 	"fmt"
 	"log"
-
-	"github.com/yusufpapurcu/wmi"
 )
 
-// SMARTCollector collects SMART health metrics for SATA/HDD drives via WMI MSFT_StorageReliabilityCounter.
+// SMARTCollector collects SMART health metrics for SATA/HDD drives via direct ATA PASS-THROUGH IOCTL.
 type SMARTCollector struct{}
 
-func NewSMARTCollector() *SMARTCollector {
-	return &SMARTCollector{}
-}
+func NewSMARTCollector() *SMARTCollector { return &SMARTCollector{} }
 
-func (s *SMARTCollector) Name() string {
-	return "smart"
-}
+func (s *SMARTCollector) Name() string { return "smart" }
 
 func (s *SMARTCollector) Collect() ([]Metric, error) {
-	var disks []msftPhysicalDisk
-	q := wmi.CreateQuery(&disks, "")
-	if err := wmi.QueryNamespace(q, &disks, `root\Microsoft\Windows\Storage`); err != nil {
-		log.Printf("smart: failed to query MSFT_PhysicalDisk: %v", err)
-		return nil, nil
-	}
-
-	var counters []msftStorageReliabilityCounter
-	qc := wmi.CreateQuery(&counters, "")
-	if err := wmi.QueryNamespace(qc, &counters, `root\Microsoft\Windows\Storage`); err != nil {
-		log.Printf("smart: failed to query MSFT_StorageReliabilityCounter: %v", err)
-		return nil, nil
-	}
-
-	counterMap := make(map[string]msftStorageReliabilityCounter)
-	for _, c := range counters {
-		counterMap[c.DeviceId] = c
-	}
-
+	drives := EnumeratePhysicalDrives()
 	var metrics []Metric
-	for _, disk := range disks {
-		// Only non-NVMe drives (SATA, ATA, SAS, etc.)
-		if disk.BusType == busTypeNVMe {
-			continue
+
+	for _, d := range drives {
+		if d.BusType == busTypeNvme {
+			continue // handled by NVMeCollector
 		}
 
-		c, ok := counterMap[disk.DeviceId]
-		if !ok {
-			continue
+		label := d.Model
+		if label == "" {
+			label = fmt.Sprintf("PhysicalDrive%d", d.Index)
 		}
-
-		label := fmt.Sprintf("%s (Drive%s)", disk.FriendlyName, disk.DeviceId)
 		labels := map[string]string{
 			"device": label,
-			"id":     disk.DeviceId,
+			"drive":  fmt.Sprintf("%d", d.Index),
 		}
 
-		if c.Temperature > 0 {
+		if d.HasTemp {
 			metrics = append(metrics, Metric{
 				Name:   "smart_temp_celsius",
-				Value:  float64(c.Temperature),
+				Value:  d.TempC,
 				Labels: copyLabels(labels),
 			})
 		}
-		if c.Wear > 0 {
+
+		// Power-on hours: SMART attr 0x09 (9).
+		// Use only lower 32 bits — upper bytes may encode minutes/seconds on some drives.
+		if a, ok := d.SmartAttrs[0x09]; ok && a.RawLo > 0 && a.RawLo < 1_000_000 {
 			metrics = append(metrics, Metric{
-				Name:   "smart_percentage_used",
-				Value:  float64(c.Wear),
+				Name:   "smart_power_on_hours",
+				Value:  float64(a.RawLo),
 				Labels: copyLabels(labels),
 			})
 		}
-		metrics = append(metrics, Metric{
-			Name:   "smart_power_on_hours",
-			Value:  float64(c.PowerOnHours),
-			Labels: copyLabels(labels),
-		})
-		metrics = append(metrics, Metric{
-			Name:   "smart_read_errors_total",
-			Value:  float64(c.ReadErrorsTotal),
-			Labels: copyLabels(labels),
-		})
-		metrics = append(metrics, Metric{
-			Name:   "smart_write_errors_total",
-			Value:  float64(c.WriteErrorsTotal),
-			Labels: copyLabels(labels),
-		})
+
+		// Reallocated sectors: attr 0x05 (5) — raw value = count
+		if a, ok := d.SmartAttrs[0x05]; ok {
+			metrics = append(metrics, Metric{
+				Name:   "smart_reallocated_sectors",
+				Value:  float64(a.RawLo),
+				Labels: copyLabels(labels),
+			})
+		}
+
+		// SSD wear / life remaining.
+		// Attr 0xE7 (231) = SSD Life Left: normalized value IS the percentage remaining.
+		// Attr 0xE9 (233) = Media_Wearout_Indicator: normalized starts at 100, decreases.
+		// Only emit if the normalized value is sane (1-100).
+		for _, wearId := range []byte{0xE7, 0xE9} {
+			if a, ok := d.SmartAttrs[wearId]; ok && a.Value > 0 && a.Value <= 100 {
+				metrics = append(metrics, Metric{
+					Name:   "smart_life_remaining_percent",
+					Value:  float64(a.Value),
+					Labels: copyLabels(labels),
+				})
+				break
+			}
+		}
+
+		// Pending sectors: attr 0xC5 (197)
+		if a, ok := d.SmartAttrs[0xC5]; ok {
+			metrics = append(metrics, Metric{
+				Name:   "smart_pending_sectors",
+				Value:  float64(a.RawLo),
+				Labels: copyLabels(labels),
+			})
+		}
 	}
 
 	if len(metrics) == 0 {
-		log.Printf("smart: no SATA/HDD drives found via WMI (may require admin)")
+		log.Printf("smart: no SATA/HDD drives found or no SMART data available")
 	}
 
 	return metrics, nil

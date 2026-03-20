@@ -16,6 +16,12 @@ import (
 )
 
 func main() {
+	// Re-launch with UAC elevation if not already administrator.
+	// Required for Ring0 kernel driver (CPU temperatures) and raw disk access.
+	if maybeElevate() {
+		os.Exit(0)
+	}
+
 	configPath := flag.String("config", "config.yaml", "path to config file")
 	mode := flag.String("mode", "tui", "run mode: tui, exporter, both")
 	flag.Parse()

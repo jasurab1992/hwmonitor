@@ -109,9 +109,10 @@ func openRing0Device() (windows.Handle, error) {
 	return windows.CreateFile(
 		path,
 		windows.GENERIC_READ|windows.GENERIC_WRITE,
-		0, nil,
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE,
+		nil,
 		windows.OPEN_EXISTING,
-		windows.FILE_ATTRIBUTE_NORMAL,
+		0,
 		0,
 	)
 }
@@ -179,6 +180,8 @@ func (c *CPUTempCollector) Collect() ([]Metric, error) {
 			return c.collectIntel()
 		case vendorAMD:
 			return c.collectAMD()
+		default:
+			// vendor unknown but Ring0 available — ACPI still better than nothing
 		}
 	}
 	return c.collectAcpi()
