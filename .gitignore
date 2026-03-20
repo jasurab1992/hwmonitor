@@ -31,3 +31,14 @@ coverage.html
 
 # Debug
 __debug_bin*
+
+# .NET / C# build artifacts
+lhm_bridge/obj/
+lhm_bridge/bin/
+lhm_bridge/publish/
+lhm_bridge/publish2/
+lhm_bridge/publish3/
+*.pdb
+
+# Embedded driver binaries (built locally, not committed)
+internal/collectors/drivers/

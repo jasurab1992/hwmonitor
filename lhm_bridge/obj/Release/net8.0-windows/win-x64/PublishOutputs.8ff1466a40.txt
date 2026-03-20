@@ -1,4 +1,0 @@
-C:\Users\jasse\Desktop\claude\HWmonitor\lhm_bridge\publish\lhm_bridge.pdb
-C:\Users\jasse\Desktop\claude\HWmonitor\lhm_bridge\publish\MonoPosixHelper.dll
-C:\Users\jasse\Desktop\claude\HWmonitor\lhm_bridge\publish\libMonoPosixHelper.dll
-C:\Users\jasse\Desktop\claude\HWmonitor\lhm_bridge\publish\lhm_bridge.exe
