@@ -59,11 +59,15 @@ func (s *SMARTCollector) Collect() ([]Metric, error) {
 			})
 		}
 
-		// SSD wear / life remaining.
-		// Attr 0xE7 (231) = SSD Life Left: normalized value IS the percentage remaining.
-		// Attr 0xE9 (233) = Media_Wearout_Indicator: normalized starts at 100, decreases.
-		// Only emit if the normalized value is sane (1-100).
-		for _, wearId := range []byte{0xE7, 0xE9} {
+		// SSD wear / life remaining — check vendor-specific attrs in priority order.
+		// Value field = normalized (1-100), where 100 = new, 0/invalid = skip.
+		//   0xE7 (231) = SSD Life Left              — WD, Kingston, Toshiba, many others
+		//   0xE9 (233) = Media_Wearout_Indicator     — Intel, some others
+		//   0xB4 (180) = Unused Reserved Block Count — Samsung (Value = % remaining)
+		//   0xCA (202) = Percent Lifetime Remaining  — Micron / Crucial
+		//   0xD1 (209) = Remaining Life Percentage   — SandForce controllers
+		//   0xAA (170) = Available Reserved Space    — Intel Optane
+		for _, wearId := range []byte{0xE7, 0xE9, 0xB4, 0xCA, 0xD1, 0xAA} {
 			if a, ok := d.SmartAttrs[wearId]; ok && a.Value > 0 && a.Value <= 100 {
 				metrics = append(metrics, Metric{
 					Name:   "smart_life_remaining_percent",

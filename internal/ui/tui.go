@@ -6,6 +6,7 @@ import (
 	"math"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -174,7 +175,14 @@ func renderCPUSection(sb *strings.Builder, metrics []collectors.Metric) {
 			cores = append(cores, coreUsage{m.Labels["core"], m.Value})
 		}
 	}
-	sort.Slice(cores, func(i, j int) bool { return cores[i].core < cores[j].core })
+	sort.Slice(cores, func(i, j int) bool {
+		ni, ei := strconv.Atoi(cores[i].core)
+		nj, ej := strconv.Atoi(cores[j].core)
+		if ei == nil && ej == nil {
+			return ni < nj
+		}
+		return cores[i].core < cores[j].core
+	})
 	if len(cores) > 0 {
 		sb.WriteString("  Per-Core:\n")
 		for _, c := range cores {
@@ -382,7 +390,8 @@ func renderNVMeSmartSection(sb *strings.Builder, metrics []collectors.Metric) {
 	sb.WriteString(sectionHeader("NVMe SMART"))
 
 	type nvmeInfo struct {
-		used, hours, readErr, writeErr float64
+		used, spare, hours, mediaErrors float64
+		hasSpare                        bool
 	}
 	devMap := make(map[string]*nvmeInfo)
 	for _, m := range metrics {
@@ -394,12 +403,13 @@ func renderNVMeSmartSection(sb *strings.Builder, metrics []collectors.Metric) {
 		switch m.Name {
 		case "nvme_percentage_used":
 			info.used = m.Value
+		case "nvme_available_spare_percent":
+			info.spare = m.Value
+			info.hasSpare = true
 		case "nvme_power_on_hours":
 			info.hours = m.Value
-		case "nvme_read_errors_total":
-			info.readErr = m.Value
-		case "nvme_write_errors_total":
-			info.writeErr = m.Value
+		case "nvme_media_errors_total":
+			info.mediaErrors = m.Value
 		}
 	}
 
@@ -413,9 +423,21 @@ func renderNVMeSmartSection(sb *strings.Builder, metrics []collectors.Metric) {
 		info := devMap[dev]
 		sb.WriteString(fmt.Sprintf("  %s%s%s\n", colorBold, dev, colorReset))
 		sb.WriteString(fmt.Sprintf("    Wear used:      %.0f%%\n", info.used))
+		if info.hasSpare {
+			spareColor := colorGreen
+			if info.spare < 10 {
+				spareColor = colorRed
+			} else if info.spare < 30 {
+				spareColor = colorYellow
+			}
+			sb.WriteString(fmt.Sprintf("    Available spare:%s%.0f%%%s\n", spareColor, info.spare, colorReset))
+		}
 		sb.WriteString(fmt.Sprintf("    Power On Hours: %.0f h\n", info.hours))
-		sb.WriteString(fmt.Sprintf("    Read Errors:    %.0f\n", info.readErr))
-		sb.WriteString(fmt.Sprintf("    Write Errors:   %.0f\n", info.writeErr))
+		errColor := colorGreen
+		if info.mediaErrors > 0 {
+			errColor = colorYellow
+		}
+		sb.WriteString(fmt.Sprintf("    Media errors:   %s%.0f%s\n", errColor, info.mediaErrors, colorReset))
 	}
 	sb.WriteString("\n")
 }

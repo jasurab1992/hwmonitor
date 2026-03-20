@@ -23,12 +23,15 @@ import (
 
 const (
 	// IOCTL_STORAGE_QUERY_PROPERTY = CTL_CODE(0x2d, 0x500, METHOD_BUFFERED=0, FILE_ANY_ACCESS=0)
-	// = (0x2d << 16) | (0 << 14) | (0x500 << 2) | 0 = 0x002D1400
 	ioctlStorageQueryProperty = 0x002D1400
 
 	// IOCTL_ATA_PASS_THROUGH = CTL_CODE(IOCTL_SCSI_BASE=4, 0x40B, METHOD_BUFFERED=0, FILE_READ|FILE_WRITE=3)
-	// = (4 << 16) | (3 << 14) | (0x40B << 2) | 0 = 0x40000 | 0xC000 | 0x102C = 0x0004D02C
 	ioctlAtaPassThrough = 0x0004D02C
+
+	// IOCTL_STORAGE_PROTOCOL_COMMAND = CTL_CODE(0x2d, 0x4F0, METHOD_BUFFERED=0, FILE_READ|FILE_WRITE=3)
+	// = (0x2d << 16) | (3 << 14) | (0x4F0 << 2) | 0 = 0x002DDFC0
+	// Used for raw NVMe admin commands on drivers that don't support StorageDeviceProtocolSpecificProperty.
+	ioctlStorageProtocolCommand = 0x002DDFC0
 )
 
 // StoragePropertyId
@@ -151,6 +154,31 @@ type nvmeSmartHealthInfo struct {
 	_                                  [296]byte
 }
 
+// ─── NVMe Protocol Command (fallback for drivers that reject StorageDeviceProtocolSpecificProperty) ───
+
+// storageProtocolCommand matches Windows STORAGE_PROTOCOL_COMMAND (winioctl.h).
+// Layout is: 16 DWORD fields (64 bytes) + [3]DWORD reserved (12 bytes) + 64-byte NVMe SQE = 140 bytes.
+type storageProtocolCommand struct {
+	Version                      uint32   // STORAGE_PROTOCOL_STRUCTURE_VERSION = 1
+	Length                       uint32   // sizeof(storageProtocolCommand)
+	ProtocolType                 uint32   // ProtocolTypeNvme = 3
+	Flags                        uint32
+	ErrorCode                    uint32
+	CommandLength                uint32   // STORAGE_PROTOCOL_COMMAND_LENGTH_NVME = 64
+	ErrorInfoLength              uint32
+	DataToDeviceTransferLength   uint32
+	DataFromDeviceTransferLength uint32
+	TimeOutValue                 uint32
+	ErrorInfoOffset              uint32
+	DataToDeviceBufferOffset     uint32
+	DataFromDeviceBufferOffset   uint32   // = sizeof(storageProtocolCommand) = 140
+	CommandSpecific              uint32
+	Reserved0                    uint32
+	FixedProtocolReturnData      uint32
+	Reserved1                    [3]uint32
+	Command                      [64]byte // raw NVMe Submission Queue Entry
+}
+
 // ─── ATA PASS-THROUGH ────────────────────────────────────────────────────────
 
 type ataPassThroughEx struct {
@@ -179,17 +207,18 @@ const (
 // ─── PhysicalDriveInfo — result of enumerating one drive ─────────────────────
 
 type physicalDriveInfo struct {
-	Index      int
-	Model      string
-	Serial     string
-	BusType    int
-	TempC      float64
-	HasTemp    bool
+	Index   int
+	Model   string
+	Serial  string
+	BusType int
+	TempC   float64
+	HasTemp bool
 	// NVMe SMART
-	NVMePercentUsed byte
-	NVMePowerOnHours uint64
-	NVMeMediaErrors  uint64
-	NVMeHasData      bool
+	NVMePercentUsed    byte
+	NVMeAvailableSpare byte
+	NVMePowerOnHours   uint64
+	NVMeMediaErrors    uint64
+	NVMeHasData        bool
 	// SATA SMART attributes map: attribute id → value
 	SmartAttrs map[byte]smartAttr
 }
@@ -208,7 +237,8 @@ type smartAttr struct {
 // and collects available data from each.
 func EnumeratePhysicalDrives() []physicalDriveInfo {
 	var results []physicalDriveInfo
-	for i := 0; i < 16; i++ {
+	consecutive := 0
+	for i := 0; i < 32; i++ {
 		path, _ := syscall.UTF16PtrFromString(fmt.Sprintf(`\\.\PhysicalDrive%d`, i))
 		h, err := windows.CreateFile(
 			path,
@@ -220,8 +250,13 @@ func EnumeratePhysicalDrives() []physicalDriveInfo {
 			0,
 		)
 		if err != nil {
-			break // no more drives
+			consecutive++
+			if consecutive >= 3 {
+				break // 3 consecutive missing drives — assume no more
+			}
+			continue
 		}
+		consecutive = 0
 		info := queryDrive(h, i)
 		windows.CloseHandle(h)
 		results = append(results, info)
@@ -241,11 +276,12 @@ func queryDrive(h windows.Handle, index int) physicalDriveInfo {
 	// 3. SMART / health
 	switch info.BusType {
 	case busTypeNvme:
-		readNVMeSmart(h, &info)
+		if !readNVMeSmart(h, &info) {
+			readNVMeSmartFallback(h, &info) // STORAGE_PROTOCOL_COMMAND fallback
+		}
 	case busTypeSata, busTypeAta:
 		readSATASmart(h, &info)
 	default:
-		// Try ATA SMART for unknown bus types (USB bridges etc.)
 		readSATASmart(h, &info)
 	}
 
@@ -356,12 +392,8 @@ type nvmeQueryInput struct {
 	Reserved                    [3]uint32
 }
 
-func readNVMeSmart(h windows.Handle, info *physicalDriveInfo) {
-	const smartSize = 512 // NVMe SMART/Health log page 0x02 is always 512 bytes
-
-	// ProtocolDataOffset is the number of bytes from the start of the
-	// STORAGE_PROTOCOL_SPECIFIC_DATA portion to where the payload will appear
-	// in the output buffer. That equals sizeof(STORAGE_PROTOCOL_SPECIFIC_DATA) = 40.
+func readNVMeSmart(h windows.Handle, info *physicalDriveInfo) bool {
+	const smartSize = 512
 	const protSectionSize = 40 // sizeof STORAGE_PROTOCOL_SPECIFIC_DATA
 
 	q := nvmeQueryInput{
@@ -374,7 +406,6 @@ func readNVMeSmart(h windows.Handle, info *physicalDriveInfo) {
 		ProtocolDataLength:       smartSize,
 	}
 
-	// Output buffer: same header + 512 bytes of NVMe SMART data.
 	outBuf := make([]byte, int(unsafe.Sizeof(q))+smartSize)
 	var returned uint32
 	err := windows.DeviceIoControl(h, ioctlStorageQueryProperty,
@@ -382,26 +413,77 @@ func readNVMeSmart(h windows.Handle, info *physicalDriveInfo) {
 		&outBuf[0], uint32(len(outBuf)),
 		&returned, nil)
 	if err != nil {
-		return // StorageDeviceProtocolSpecificProperty not supported by this NVMe drive/driver
+		return false
 	}
 
-	// NVMe SMART data starts immediately after the query header in the output.
 	offset := int(unsafe.Sizeof(q))
 	if int(returned) < offset+512 {
 		log.Printf("disk: NVMe SMART response too short (%d bytes) for PhysicalDrive%d", returned, info.Index)
+		return false
+	}
+
+	parseNVMeHealth(outBuf[offset:], info)
+	return true
+}
+
+// readNVMeSmartFallback uses IOCTL_STORAGE_PROTOCOL_COMMAND to send a raw NVMe
+// Get Log Page admin command (opcode 0x02, log page 0x02 = SMART/Health Info).
+// This works on some drivers that reject StorageDeviceProtocolSpecificProperty.
+func readNVMeSmartFallback(h windows.Handle, info *physicalDriveInfo) {
+	const smartSize = 512
+	cmdSize := uint32(unsafe.Sizeof(storageProtocolCommand{}))
+	totalSize := cmdSize + smartSize
+
+	buf := make([]byte, totalSize)
+	cmd := (*storageProtocolCommand)(unsafe.Pointer(&buf[0]))
+	cmd.Version = 1 // STORAGE_PROTOCOL_STRUCTURE_VERSION
+	cmd.Length = cmdSize
+	cmd.ProtocolType = protocolTypeNvme
+	cmd.Flags = 0
+	cmd.CommandLength = 64 // STORAGE_PROTOCOL_COMMAND_LENGTH_NVME
+	cmd.ErrorInfoLength = 0
+	cmd.DataFromDeviceTransferLength = smartSize
+	cmd.TimeOutValue = 10
+	cmd.ErrorInfoOffset = 0
+	cmd.DataFromDeviceBufferOffset = cmdSize
+
+	// NVMe Submission Queue Entry: Get Log Page (Admin Opcode 0x02)
+	// SQE bytes 0-3 = CDW0: opcode
+	cmd.Command[0] = 0x02
+	// SQE bytes 4-7 = NSID: 0xFFFFFFFF (global, applies to all namespaces)
+	cmd.Command[4] = 0xFF
+	cmd.Command[5] = 0xFF
+	cmd.Command[6] = 0xFF
+	cmd.Command[7] = 0xFF
+	// SQE bytes 40-43 = CDW10: LID[7:0]=0x02 (SMART log), NUMDL[31:16]=0x7F (127 → 128 DWORDs = 512 bytes)
+	binary.LittleEndian.PutUint32(cmd.Command[40:44], (127<<16)|0x02)
+
+	var returned uint32
+	err := windows.DeviceIoControl(h, ioctlStorageProtocolCommand,
+		&buf[0], totalSize,
+		&buf[0], totalSize,
+		&returned, nil)
+	if err != nil || int(returned) < int(cmdSize)+512 {
 		return
 	}
 
-	smart := (*nvmeSmartHealthInfo)(unsafe.Pointer(&outBuf[offset]))
+	parseNVMeHealth(buf[cmdSize:], info)
+}
 
-	// CompositeTemperature: 16-bit LE, Kelvin
+func parseNVMeHealth(data []byte, info *physicalDriveInfo) {
+	if len(data) < 512 {
+		return
+	}
+	smart := (*nvmeSmartHealthInfo)(unsafe.Pointer(&data[0]))
+
 	tempK := uint16(smart.CompositeTemperature[0]) | uint16(smart.CompositeTemperature[1])<<8
-	if tempK > 273 {
+	if tempK > 273 && !info.HasTemp {
 		info.TempC = float64(tempK) - 273.15
 		info.HasTemp = true
 	}
 
 	info.NVMePercentUsed = smart.PercentageUsed
+	info.NVMeAvailableSpare = smart.AvailableSpare
 	info.NVMePowerOnHours = binary.LittleEndian.Uint64(smart.PowerOnHours[:8])
 	info.NVMeMediaErrors = binary.LittleEndian.Uint64(smart.MediaErrors[:8])
 	info.NVMeHasData = true

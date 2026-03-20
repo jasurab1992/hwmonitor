@@ -49,6 +49,11 @@ func (n *NVMeCollector) Collect() ([]Metric, error) {
 				Labels: copyLabels(labels),
 			})
 			metrics = append(metrics, Metric{
+				Name:   "nvme_available_spare_percent",
+				Value:  float64(d.NVMeAvailableSpare),
+				Labels: copyLabels(labels),
+			})
+			metrics = append(metrics, Metric{
 				Name:   "nvme_power_on_hours",
 				Value:  float64(d.NVMePowerOnHours),
 				Labels: copyLabels(labels),
