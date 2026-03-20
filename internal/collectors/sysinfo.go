@@ -14,7 +14,6 @@ type win32Processor struct {
 	NumberOfLogicalProcessors uint32
 	L2CacheSize               uint32
 	L3CacheSize               uint32
-	CurrentClockSpeed         uint32
 }
 
 type win32BaseBoard struct {
@@ -24,12 +23,12 @@ type win32BaseBoard struct {
 
 type win32BIOS struct {
 	SMBIOSBIOSVersion string
-	ReleaseDate       string
 }
 
 type win32PhysicalMemory struct {
-	Speed            uint32
-	SMBIOSMemoryType uint16
+	Capacity   uint64
+	Speed      uint32
+	MemoryType uint16
 }
 
 // SysInfoCollector collects static system information via WMI.
@@ -43,61 +42,90 @@ func (s *SysInfoCollector) Name() string {
 	return "sysinfo"
 }
 
+func decodeMemoryType(mt uint16) string {
+	switch mt {
+	case 20:
+		return "DDR"
+	case 21:
+		return "DDR2"
+	case 24:
+		return "DDR3"
+	case 26:
+		return "DDR4"
+	case 34:
+		return "DDR5"
+	default:
+		return "Unknown"
+	}
+}
+
 func (s *SysInfoCollector) Collect() ([]Metric, error) {
-	labels := make(map[string]string)
+	var metrics []Metric
 
 	// CPU info
 	var cpus []win32Processor
-	if err := wmi.Query("SELECT Name, NumberOfCores, NumberOfLogicalProcessors, L2CacheSize, L3CacheSize, CurrentClockSpeed FROM Win32_Processor", &cpus); err == nil && len(cpus) > 0 {
-		labels["cpu_name"] = cpus[0].Name
-		labels["cpu_cores"] = fmt.Sprintf("%d", cpus[0].NumberOfCores)
-		labels["cpu_threads"] = fmt.Sprintf("%d", cpus[0].NumberOfLogicalProcessors)
-		labels["cpu_l2_cache_kb"] = fmt.Sprintf("%d", cpus[0].L2CacheSize)
-		labels["cpu_l3_cache_kb"] = fmt.Sprintf("%d", cpus[0].L3CacheSize)
-		labels["cpu_clock_mhz"] = fmt.Sprintf("%d", cpus[0].CurrentClockSpeed)
+	if err := wmi.Query("SELECT Name, NumberOfCores, NumberOfLogicalProcessors, L2CacheSize, L3CacheSize FROM Win32_Processor", &cpus); err == nil && len(cpus) > 0 {
+		metrics = append(metrics,
+			Metric{
+				Name:   "sysinfo_cpu_cores",
+				Value:  float64(cpus[0].NumberOfCores),
+				Labels: map[string]string{"processor": cpus[0].Name},
+			},
+			Metric{
+				Name:   "sysinfo_cpu_threads",
+				Value:  float64(cpus[0].NumberOfLogicalProcessors),
+				Labels: map[string]string{"processor": cpus[0].Name},
+			},
+			Metric{
+				Name:  "sysinfo_cpu_l2_cache_kb",
+				Value: float64(cpus[0].L2CacheSize),
+			},
+			Metric{
+				Name:  "sysinfo_cpu_l3_cache_kb",
+				Value: float64(cpus[0].L3CacheSize),
+			},
+		)
 	}
 
 	// Motherboard info
 	var boards []win32BaseBoard
 	if err := wmi.Query("SELECT Manufacturer, Product FROM Win32_BaseBoard", &boards); err == nil && len(boards) > 0 {
-		labels["mobo"] = boards[0].Manufacturer + " " + boards[0].Product
+		metrics = append(metrics, Metric{
+			Name:  "sysinfo_baseboard_info",
+			Value: 1,
+			Labels: map[string]string{
+				"manufacturer": boards[0].Manufacturer,
+				"product":      boards[0].Product,
+			},
+		})
 	}
 
 	// BIOS info
 	var bios []win32BIOS
-	if err := wmi.Query("SELECT SMBIOSBIOSVersion, ReleaseDate FROM Win32_BIOS", &bios); err == nil && len(bios) > 0 {
-		labels["bios_version"] = bios[0].SMBIOSBIOSVersion
-		labels["bios_date"] = bios[0].ReleaseDate
+	if err := wmi.Query("SELECT SMBIOSBIOSVersion FROM Win32_BIOS", &bios); err == nil && len(bios) > 0 {
+		metrics = append(metrics, Metric{
+			Name:  "sysinfo_bios_info",
+			Value: 1,
+			Labels: map[string]string{
+				"version": bios[0].SMBIOSBIOSVersion,
+			},
+		})
 	}
 
 	// RAM info
 	var mem []win32PhysicalMemory
-	if err := wmi.Query("SELECT Speed, SMBIOSMemoryType FROM Win32_PhysicalMemory", &mem); err == nil && len(mem) > 0 {
-		ramType := "Unknown"
-		switch mem[0].SMBIOSMemoryType {
-		case 17:
-			ramType = "DDR4"
-		case 34:
-			ramType = "DDR5"
-		case 26:
-			ramType = "DDR4" // some systems report 26 for DDR4
-		case 24:
-			ramType = "DDR3"
-		case 20:
-			ramType = "DDR"
-		case 21:
-			ramType = "DDR2"
+	if err := wmi.Query("SELECT Capacity, Speed, MemoryType FROM Win32_PhysicalMemory", &mem); err == nil {
+		for i, m := range mem {
+			metrics = append(metrics, Metric{
+				Name:  "sysinfo_memory_module_bytes",
+				Value: float64(m.Capacity),
+				Labels: map[string]string{
+					"slot":      fmt.Sprintf("%d", i),
+					"speed_mhz": fmt.Sprintf("%d", m.Speed),
+					"type":      decodeMemoryType(m.MemoryType),
+				},
+			})
 		}
-		labels["ram_type"] = ramType
-		labels["ram_speed_mhz"] = fmt.Sprintf("%d", mem[0].Speed)
-	}
-
-	metrics := []Metric{
-		{
-			Name:   "system_info",
-			Value:  1,
-			Labels: labels,
-		},
 	}
 
 	return metrics, nil
