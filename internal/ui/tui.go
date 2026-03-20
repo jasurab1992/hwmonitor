@@ -92,7 +92,8 @@ func (t *TUI) render() {
 	cpuTempM := allMetrics["cpu_temp"]
 	nvmeM := allMetrics["nvme"]
 	smartM := allMetrics["smart"]
-	renderTemperaturesSection(&sb, sensorsM, cpuTempM, nvmeM, smartM)
+	ipmiM := allMetrics["ipmi"]
+	renderTemperaturesSection(&sb, sensorsM, cpuTempM, nvmeM, smartM, ipmiM)
 
 	if len(sensorsM) > 0 {
 		renderVoltagesSection(&sb, sensorsM)
@@ -213,7 +214,7 @@ func renderMemorySection(sb *strings.Builder, metrics []collectors.Metric) {
 	sb.WriteString("\n")
 }
 
-func renderTemperaturesSection(sb *strings.Builder, sensorsM, cpuTempM, nvmeM, smartM []collectors.Metric) {
+func renderTemperaturesSection(sb *strings.Builder, sensorsM, cpuTempM, nvmeM, smartM, ipmiM []collectors.Metric) {
 	var lines []string
 
 	// From sensors (LHM/OHM) — per-core CPU temps
@@ -255,6 +256,14 @@ func renderTemperaturesSection(sb *strings.Builder, sensorsM, cpuTempM, nvmeM, s
 			dev := m.Labels["device"]
 			lines = append(lines, fmt.Sprintf("  %-30s %s%.0f°C%s",
 				"SATA "+dev, tempColor(m.Value), m.Value, colorReset))
+		}
+	}
+
+	// IPMI BMC sensors (inlet, ambient, exhaust, etc.)
+	for _, m := range ipmiM {
+		if m.Name == "ipmi_temperature_celsius" {
+			lines = append(lines, fmt.Sprintf("  %-30s %s%.0f°C%s",
+				m.Labels["sensor"], tempColor(m.Value), m.Value, colorReset))
 		}
 	}
 

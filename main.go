@@ -60,6 +60,9 @@ func main() {
 	if cfg.Collectors.Sensors {
 		colls = append(colls, collectors.NewSensorsCollector())
 	}
+	if cfg.Collectors.IPMI {
+		colls = append(colls, collectors.NewIPMICollector())
+	}
 
 	if len(colls) == 0 {
 		log.Fatal("no collectors enabled in config")
@@ -68,6 +71,7 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	defer collectors.CleanupRing0()
+	defer collectors.CleanupSmartctl()
 
 	// Handle Ctrl+C
 	sigCh := make(chan os.Signal, 1)

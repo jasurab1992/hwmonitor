@@ -18,6 +18,7 @@ type CollectorsConfig struct {
 	Network bool `yaml:"network"`
 	SysInfo bool `yaml:"sysinfo"`
 	Sensors bool `yaml:"sensors"`
+	IPMI    bool `yaml:"ipmi"`
 }
 
 // Config holds the application configuration.
@@ -42,6 +43,7 @@ func DefaultConfig() *Config {
 			Network: true,
 			SysInfo: true,
 			Sensors: true,
+			IPMI:    true,
 		},
 	}
 }
