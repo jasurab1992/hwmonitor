@@ -1,0 +1,7 @@
+prometheus_port: 9100
+collect_interval: 5s
+collectors:
+  cpu: true
+  memory: true
+  disk: true
+  nvme: true
