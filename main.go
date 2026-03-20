@@ -63,6 +63,9 @@ func main() {
 	if cfg.Collectors.IPMI {
 		colls = append(colls, collectors.NewIPMICollector())
 	}
+	if cfg.Collectors.LHM {
+		colls = append(colls, collectors.NewLHMCollector())
+	}
 
 	if len(colls) == 0 {
 		log.Fatal("no collectors enabled in config")
@@ -73,6 +76,7 @@ func main() {
 	defer collectors.CleanupRing0()
 	defer collectors.CleanupSmartctl()
 	defer collectors.CleanupIPMI()
+	defer collectors.CleanupLHM()
 
 	// Handle Ctrl+C
 	sigCh := make(chan os.Signal, 1)

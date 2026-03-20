@@ -2,38 +2,49 @@
 cd /d %~dp0
 set TAGS=
 
-:: ── Download smartctl.exe ─────────────────────────────────────────────────────
+:: ── Download smartctl.exe via winget (smartmontools 7.5) ──────────────────────
 if not exist "internal\collectors\drivers\smartctl.exe" (
-    echo Downloading smartctl.exe ^(smartmontools 7.4^)...
-    powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-        "$zip = [IO.Path]::GetTempFileName() + '.zip';" ^
-        "$out = [IO.Path]::Combine($env:TEMP, 'smartctl_extract');" ^
-        "Invoke-WebRequest -Uri 'https://downloads.sourceforge.net/project/smartmontools/smartmontools/7.4/smartmontools-7.4-1.win32.zip' -OutFile $zip -UseBasicParsing;" ^
-        "Expand-Archive -Path $zip -DestinationPath $out -Force;" ^
-        "Copy-Item (Get-ChildItem -Recurse -Filter smartctl.exe $out | Select-Object -First 1).FullName 'internal\collectors\drivers\smartctl.exe';" ^
-        "Remove-Item $zip,$out -Recurse -Force -ErrorAction SilentlyContinue"
-    if exist "internal\collectors\drivers\smartctl.exe" (
+    echo Downloading smartctl.exe via winget...
+    winget install smartmontools.smartmontools --silent --accept-source-agreements --accept-package-agreements >nul 2>&1
+    if exist "C:\Program Files\smartmontools\bin\smartctl.exe" (
+        copy /Y "C:\Program Files\smartmontools\bin\smartctl.exe" "internal\collectors\drivers\smartctl.exe" >nul
         echo smartctl.exe OK
     ) else (
-        echo WARNING: Could not download smartctl.exe
+        echo WARNING: Could not download smartctl.exe - install smartmontools manually
+        echo   winget install smartmontools.smartmontools
+        echo   then copy smartctl.exe to internal\collectors\drivers\
     )
 )
 
-:: ── Download ipmitool.exe ─────────────────────────────────────────────────────
+:: ── ipmitool: no pre-built Windows binary is published by the ipmitool project ─
+:: ── Install manually if IPMI/BMC ambient temps are needed:                      ─
+:: ──   https://github.com/ipmitool/ipmitool (build from source)               ─
+:: ──   or use vendor tools (Dell DRAC, HPE iLO) which may include ipmitool.exe ─
 if not exist "internal\collectors\drivers\ipmitool.exe" (
-    echo Downloading ipmitool.exe ^(1.8.19^)...
-    powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-        "Invoke-WebRequest -Uri 'https://github.com/ipmitool/ipmitool/releases/download/IPMITOOL_1_8_19/ipmitool.exe' -OutFile 'internal\collectors\drivers\ipmitool.exe' -UseBasicParsing"
-    if exist "internal\collectors\drivers\ipmitool.exe" (
-        echo ipmitool.exe OK
+    echo NOTE: ipmitool.exe not found - IPMI ambient temperature collection disabled.
+    echo       Place ipmitool.exe in internal\collectors\drivers\ to enable.
+)
+
+:: ── Build lhm_bridge (C# LibreHardwareMonitor bridge) ────────────────────────
+if not exist "internal\collectors\drivers\lhm_bridge.exe" (
+    echo Building lhm_bridge...
+    if exist "lhm_bridge\lhm_bridge.csproj" (
+        dotnet publish lhm_bridge\lhm_bridge.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o lhm_bridge\publish >nul 2>&1
+        if exist "lhm_bridge\publish\lhm_bridge.exe" (
+            copy /Y "lhm_bridge\publish\lhm_bridge.exe" "internal\collectors\drivers\lhm_bridge.exe" >nul
+            echo lhm_bridge.exe OK
+        ) else (
+            echo WARNING: lhm_bridge build failed - CPU temp/voltage/fan data from LHM disabled.
+        )
     ) else (
-        echo WARNING: Could not download ipmitool.exe
+        echo NOTE: lhm_bridge project not found - LHM collector disabled.
     )
 )
 
 :: ── Assemble build tags ───────────────────────────────────────────────────────
 if exist "internal\collectors\drivers\smartctl.exe"  set TAGS=%TAGS%embed_smartctl,
 if exist "internal\collectors\drivers\ipmitool.exe"  set TAGS=%TAGS%embed_ipmitool,
+if exist "internal\collectors\drivers\lhm_bridge.exe" set TAGS=%TAGS%embed_lhm,
 
 :: Strip trailing comma
 if defined TAGS set TAGS=%TAGS:~0,-1%

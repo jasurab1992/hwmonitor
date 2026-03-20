@@ -62,7 +62,7 @@ func (t *TUI) render() {
 	sb.WriteString(clearScreen)
 	sb.WriteString(colorBold + colorCyan)
 	sb.WriteString("╔══════════════════════════════════════════════════════════╗\n")
-	sb.WriteString("║           HWmonitor — Hardware Monitor                  ║\n")
+	sb.WriteString("║           HWmonitor — Hardware Monitor                   ║\n")
 	sb.WriteString("╚══════════════════════════════════════════════════════════╝\n")
 	sb.WriteString(colorReset)
 	sb.WriteString(colorDim + fmt.Sprintf("  Updated: %s    Press Ctrl+C to exit\n", time.Now().Format("15:04:05")) + colorReset)
@@ -87,18 +87,17 @@ func (t *TUI) render() {
 	if m, ok := allMetrics["memory"]; ok {
 		renderMemorySection(&sb, m)
 	}
-	// Temperatures: prefer sensors (LHM/OHM per-core), fall back to cpu_temp (ACPI zones)
+	// Temperatures: prefer sensors (LHM/OHM WMI), then lhm_bridge, then cpu_temp (ACPI)
 	sensorsM := allMetrics["sensors"]
 	cpuTempM := allMetrics["cpu_temp"]
 	nvmeM := allMetrics["nvme"]
 	smartM := allMetrics["smart"]
 	ipmiM := allMetrics["ipmi"]
-	renderTemperaturesSection(&sb, sensorsM, cpuTempM, nvmeM, smartM, ipmiM)
+	lhmM := allMetrics["lhm"]
+	renderTemperaturesSection(&sb, sensorsM, cpuTempM, nvmeM, smartM, ipmiM, lhmM)
 
-	if len(sensorsM) > 0 {
-		renderVoltagesSection(&sb, sensorsM)
-		renderFansSection(&sb, sensorsM)
-	}
+	renderVoltagesSection(&sb, sensorsM, lhmM)
+	renderFansSection(&sb, sensorsM, lhmM)
 	if m, ok := allMetrics["disk"]; ok {
 		renderDiskSection(&sb, m)
 	}
@@ -169,7 +168,10 @@ func renderCPUSection(sb *strings.Builder, metrics []collectors.Metric) {
 		}
 	}
 
-	type coreUsage struct{ core string; pct float64 }
+	type coreUsage struct {
+		core string
+		pct  float64
+	}
 	var cores []coreUsage
 	for _, m := range metrics {
 		if m.Name == "cpu_core_usage_percent" {
@@ -214,7 +216,7 @@ func renderMemorySection(sb *strings.Builder, metrics []collectors.Metric) {
 	sb.WriteString("\n")
 }
 
-func renderTemperaturesSection(sb *strings.Builder, sensorsM, cpuTempM, nvmeM, smartM, ipmiM []collectors.Metric) {
+func renderTemperaturesSection(sb *strings.Builder, sensorsM, cpuTempM, nvmeM, smartM, ipmiM, lhmM []collectors.Metric) {
 	var lines []string
 
 	// From sensors (LHM/OHM) — per-core CPU temps
@@ -222,6 +224,33 @@ func renderTemperaturesSection(sb *strings.Builder, sensorsM, cpuTempM, nvmeM, s
 		if m.Name == "sensor_temperature_celsius" {
 			lines = append(lines, fmt.Sprintf("  %-30s %s%.0f°C%s",
 				m.Labels["name"], tempColor(m.Value), m.Value, colorReset))
+		}
+	}
+
+	// Fallback: lhm_bridge temps (when sensors WMI not available).
+	// Skip "CPU Core #N" per-core — only show Package/Max/Average/board/GPU.
+	// On multi-socket systems prefix each CPU's sensors with "CPU0:"/"CPU1:" etc.
+	if len(lines) == 0 {
+		for _, m := range lhmM {
+			if m.Name != "lhm_temperature_celsius" {
+				continue
+			}
+			name := m.Labels["name"]
+			if strings.Contains(name, "Distance to TjMax") {
+				continue
+			}
+			if strings.HasPrefix(name, "CPU Core #") || strings.HasPrefix(name, "GPU Core #") {
+				continue
+			}
+			hw := m.Labels["hardware"]
+			id := m.Labels["identifier"]
+			prefix := ""
+			if idx := lhmSocketIndex(id); idx >= 0 && lhmHasMultipleSockets(lhmM, hw) {
+				prefix = fmt.Sprintf("CPU%d: ", idx)
+			}
+			label := prefix + name + " (" + hw + ")"
+			lines = append(lines, fmt.Sprintf("  %-36s %s%.0f°C%s",
+				label, tempColor(m.Value), m.Value, colorReset))
 		}
 	}
 
@@ -277,11 +306,21 @@ func renderTemperaturesSection(sb *strings.Builder, sensorsM, cpuTempM, nvmeM, s
 	sb.WriteString("\n")
 }
 
-func renderVoltagesSection(sb *strings.Builder, metrics []collectors.Metric) {
+func renderVoltagesSection(sb *strings.Builder, sensorsM, lhmM []collectors.Metric) {
 	var lines []string
-	for _, m := range metrics {
+	for _, m := range sensorsM {
 		if m.Name == "sensor_voltage_volts" {
 			lines = append(lines, fmt.Sprintf("  %-30s %.3f V", m.Labels["name"], m.Value))
+		}
+	}
+	for _, m := range lhmM {
+		if m.Name == "lhm_voltage_volts" && !strings.HasPrefix(m.Labels["name"], "CPU Core #") {
+			name := m.Labels["name"]
+			prefix := ""
+			if idx := lhmSocketIndex(m.Labels["identifier"]); idx >= 0 && lhmHasMultipleSockets(lhmM, m.Labels["hardware"]) {
+				prefix = fmt.Sprintf("CPU%d: ", idx)
+			}
+			lines = append(lines, fmt.Sprintf("  %-30s %.3f V", prefix+name, m.Value))
 		}
 	}
 	if len(lines) == 0 {
@@ -294,10 +333,15 @@ func renderVoltagesSection(sb *strings.Builder, metrics []collectors.Metric) {
 	sb.WriteString("\n")
 }
 
-func renderFansSection(sb *strings.Builder, metrics []collectors.Metric) {
+func renderFansSection(sb *strings.Builder, sensorsM, lhmM []collectors.Metric) {
 	var lines []string
-	for _, m := range metrics {
+	for _, m := range sensorsM {
 		if m.Name == "sensor_fan_rpm" && m.Value > 0 {
+			lines = append(lines, fmt.Sprintf("  %-30s %.0f RPM", m.Labels["name"], m.Value))
+		}
+	}
+	for _, m := range lhmM {
+		if m.Name == "lhm_fan_rpm" && m.Value > 0 {
 			lines = append(lines, fmt.Sprintf("  %-30s %.0f RPM", m.Labels["name"], m.Value))
 		}
 	}
@@ -315,7 +359,7 @@ func renderDiskSection(sb *strings.Builder, metrics []collectors.Metric) {
 	sb.WriteString(sectionHeader("Disk"))
 
 	type diskUsage struct {
-		device, mountpoint string
+		device, mountpoint     string
 		total, used, free, pct float64
 	}
 	usageMap := make(map[string]*diskUsage)
@@ -353,7 +397,7 @@ func renderDiskSection(sb *strings.Builder, metrics []collectors.Metric) {
 	}
 
 	type ioStat struct {
-		device             string
+		device                string
 		readBytes, writeBytes float64
 		readCount, writeCount float64
 	}
@@ -455,14 +499,16 @@ func renderSATASmartSection(sb *strings.Builder, metrics []collectors.Metric) {
 	sb.WriteString(sectionHeader("SATA SMART"))
 
 	type smartInfo struct {
-		lifeRemaining    float64
-		hasLife          bool
-		hours            float64
-		hasHours         bool
-		reallocated      float64
-		hasReallocated   bool
-		pending          float64
-		hasPending       bool
+		lifeRemaining  float64
+		hasLife        bool
+		spare          float64
+		hasSpare       bool
+		hours          float64
+		hasHours       bool
+		reallocated    float64
+		hasReallocated bool
+		pending        float64
+		hasPending     bool
 	}
 	devMap := make(map[string]*smartInfo)
 	for _, m := range metrics {
@@ -475,6 +521,9 @@ func renderSATASmartSection(sb *strings.Builder, metrics []collectors.Metric) {
 		case "smart_life_remaining_percent":
 			info.lifeRemaining = m.Value
 			info.hasLife = true
+		case "smart_spare_available_percent":
+			info.spare = m.Value
+			info.hasSpare = true
 		case "smart_power_on_hours":
 			info.hours = m.Value
 			info.hasHours = true
@@ -497,7 +546,22 @@ func renderSATASmartSection(sb *strings.Builder, metrics []collectors.Metric) {
 		info := devMap[dev]
 		sb.WriteString(fmt.Sprintf("  %s%s%s\n", colorBold, dev, colorReset))
 		if info.hasLife {
-			sb.WriteString(fmt.Sprintf("    Life remaining: %.0f%%\n", info.lifeRemaining))
+			lifeColor := colorGreen
+			if info.lifeRemaining < 10 {
+				lifeColor = colorRed
+			} else if info.lifeRemaining < 30 {
+				lifeColor = colorYellow
+			}
+			sb.WriteString(fmt.Sprintf("    Life remaining: %s%.0f%%%s\n", lifeColor, info.lifeRemaining, colorReset))
+		}
+		if info.hasSpare {
+			spareColor := colorGreen
+			if info.spare < 10 {
+				spareColor = colorRed
+			} else if info.spare < 30 {
+				spareColor = colorYellow
+			}
+			sb.WriteString(fmt.Sprintf("    Available spare:%s%.0f%%%s\n", spareColor, info.spare, colorReset))
 		}
 		if info.hasHours {
 			sb.WriteString(fmt.Sprintf("    Power On Hours: %.0f h\n", info.hours))
@@ -628,4 +692,32 @@ func tempColor(temp float64) string {
 		return colorYellow
 	}
 	return colorGreen
+}
+
+// lhmSocketIndex extracts the socket/device index from an LHM identifier.
+// e.g. "/intelcpu/1/temperature/0" → 1, "/intelcpu/0/..." → 0, unknown → -1
+func lhmSocketIndex(identifier string) int {
+	// Identifier format: /hwtype/N/sensortype/M
+	parts := strings.Split(strings.TrimPrefix(identifier, "/"), "/")
+	if len(parts) >= 2 {
+		idx, err := strconv.Atoi(parts[1])
+		if err == nil {
+			return idx
+		}
+	}
+	return -1
+}
+
+// lhmHasMultipleSockets returns true if the given hardware name appears
+// with more than one distinct socket index in lhmM temperature metrics.
+func lhmHasMultipleSockets(lhmM []collectors.Metric, hardware string) bool {
+	sockets := map[int]bool{}
+	for _, m := range lhmM {
+		if m.Name == "lhm_temperature_celsius" && m.Labels["hardware"] == hardware {
+			if idx := lhmSocketIndex(m.Labels["identifier"]); idx >= 0 {
+				sockets[idx] = true
+			}
+		}
+	}
+	return len(sockets) > 1
 }

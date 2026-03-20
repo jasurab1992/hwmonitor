@@ -19,6 +19,7 @@ type CollectorsConfig struct {
 	SysInfo bool `yaml:"sysinfo"`
 	Sensors bool `yaml:"sensors"`
 	IPMI    bool `yaml:"ipmi"`
+	LHM     bool `yaml:"lhm"`
 }
 
 // Config holds the application configuration.
@@ -44,6 +45,7 @@ func DefaultConfig() *Config {
 			SysInfo: true,
 			Sensors: true,
 			IPMI:    true,
+			LHM:     true,
 		},
 	}
 }

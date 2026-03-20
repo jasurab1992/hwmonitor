@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/yusufpapurcu/wmi"
 )
 
 // IPMICollector collects BMC/IPMI sensor temperatures (inlet, outlet, ambient, etc.)
@@ -73,7 +75,56 @@ func CleanupIPMI() {
 	}
 }
 
+// msIPMISensor is a WMI record from root\WMI MSIPMISensor (available when
+// ipmidrv.sys is loaded on Windows Server — no ipmitool needed).
+type msIPMISensor struct {
+	SensorName   string
+	SensorType   uint32
+	CurrentReading uint32
+	UnitType     uint32
+	IsValid      bool
+}
+
+// collectViaWMI queries the Windows IPMI WMI provider directly.
+// Returns nil if the provider is unavailable (no ipmidrv.sys or not a server).
+func collectViaWMI() []Metric {
+	var sensors []msIPMISensor
+	if err := wmi.QueryNamespace(
+		"SELECT SensorName, SensorType, CurrentReading, UnitType, IsValid FROM MSIPMISensor",
+		&sensors, `root\WMI`,
+	); err != nil {
+		return nil
+	}
+	var metrics []Metric
+	for _, s := range sensors {
+		if !s.IsValid {
+			continue
+		}
+		// SensorType 1 = Temperature, UnitType 1 = degrees C
+		if s.SensorType != 1 || s.UnitType != 1 {
+			continue
+		}
+		val := float64(s.CurrentReading)
+		if val < -50 || val > 200 {
+			continue
+		}
+		metrics = append(metrics, Metric{
+			Name:   "ipmi_temperature_celsius",
+			Value:  val,
+			Labels: map[string]string{"sensor": strings.TrimSpace(s.SensorName)},
+		})
+	}
+	return metrics
+}
+
 func (c *IPMICollector) Collect() ([]Metric, error) {
+	// First try native WMI IPMI provider (works on Windows Server with
+	// ipmidrv.sys — no external binary needed).
+	if wmiMetrics := collectViaWMI(); len(wmiMetrics) > 0 {
+		return wmiMetrics, nil
+	}
+
+	// Fall back to ipmitool if available.
 	initIpmitool()
 	if !ipmitoolReady {
 		return nil, nil

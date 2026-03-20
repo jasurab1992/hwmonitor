@@ -2,15 +2,10 @@
 
 package collectors
 
-// diskIOCTL provides IOCTL-based disk SMART and temperature data.
-// Uses IOCTL_STORAGE_QUERY_PROPERTY (Windows 10+) to read:
-//   - Basic device descriptor (bus type, model, serial)
-//   - Temperature (StorageDeviceTemperatureProperty)
-//   - NVMe SMART via StorageDeviceProtocolSpecificProperty (log page 0x02)
-//   - SATA SMART via ATA pass-through
+// diskIOCTL provides IOCTL-based drive enumeration, device identification,
+// and temperature data. All SMART health data is collected via smartctl.
 
 import (
-	"encoding/binary"
 	"fmt"
 	"log"
 	"syscall"
@@ -21,42 +16,15 @@ import (
 
 // ─── IOCTL codes ─────────────────────────────────────────────────────────────
 
-const (
-	// IOCTL_STORAGE_QUERY_PROPERTY = CTL_CODE(0x2d, 0x500, METHOD_BUFFERED=0, FILE_ANY_ACCESS=0)
-	ioctlStorageQueryProperty = 0x002D1400
-
-	// IOCTL_ATA_PASS_THROUGH = CTL_CODE(IOCTL_SCSI_BASE=4, 0x40B, METHOD_BUFFERED=0, FILE_READ|FILE_WRITE=3)
-	ioctlAtaPassThrough = 0x0004D02C
-
-	// IOCTL_STORAGE_PROTOCOL_COMMAND = CTL_CODE(0x2d, 0x4F0, METHOD_BUFFERED=0, FILE_READ|FILE_WRITE=3)
-	// = (0x2d << 16) | (3 << 14) | (0x4F0 << 2) | 0 = 0x002DDFC0
-	// Used for raw NVMe admin commands on drivers that don't support StorageDeviceProtocolSpecificProperty.
-	ioctlStorageProtocolCommand = 0x002DDFC0
-)
+const ioctlStorageQueryProperty = 0x002D1400
 
 // StoragePropertyId
 const (
-	storageDeviceProperty                = 0
-	storageDeviceTemperatureProperty     = 0x12
-	storageDeviceProtocolSpecificProperty = 0x13
+	storageDeviceProperty            = 0
+	storageDeviceTemperatureProperty = 0x12
 )
 
-// StorageQueryType
 const propertyStandardQuery = 0
-
-// ProtocolType for StorageDeviceProtocolSpecificProperty
-const (
-	protocolTypeAta  = 2
-	protocolTypeNvme = 3
-)
-
-// NVMe Data Type
-const (
-	nvmeDataTypeLogPage = 2
-)
-
-// NVMe Log Page IDs
-const nvmeLogPageHealthInfo = 0x02
 
 // STORAGE_BUS_TYPE
 const (
@@ -66,20 +34,14 @@ const (
 	busTypeSas  = 10
 )
 
-// ─── Structs (packed, Windows ABI) ───────────────────────────────────────────
+// ─── Structs ─────────────────────────────────────────────────────────────────
 
-// storagePropertyQuery matches Windows STORAGE_PROPERTY_QUERY.
-// In C: DWORD PropertyId + DWORD QueryType + BYTE AdditionalParameters[1] + 3 bytes padding = 12 bytes.
-// We use [4]byte to hit the same 12-byte sizeof without the flexible-array complication.
-// For protocol-specific queries, nvmeQueryInput is used instead (inlines the extra data at offset 8).
 type storagePropertyQuery struct {
 	PropertyId           uint32
 	QueryType            uint32
-	AdditionalParameters [4]byte // 12 bytes total == sizeof(STORAGE_PROPERTY_QUERY) in C
+	AdditionalParameters [4]byte
 }
 
-// Fixed-size header returned for every StorageDeviceProperty query.
-// We read into a large buffer, then interpret the offset fields.
 type storageDeviceDescriptorHdr struct {
 	Version               uint32
 	Size                  uint32
@@ -92,11 +54,10 @@ type storageDeviceDescriptorHdr struct {
 	ProductRevisionOffset uint32
 	SerialNumberOffset    uint32
 	BusType               byte
-	_                     [3]byte // padding
+	_                     [3]byte
 	RawPropertiesLength   uint32
 }
 
-// storageTemperatureDataDescriptor header (followed by STORAGE_TEMPERATURE_INFO array).
 type storageTemperatureDescriptorHdr struct {
 	Version             uint32
 	Size                uint32
@@ -107,134 +68,53 @@ type storageTemperatureDescriptorHdr struct {
 	_                   [8]byte
 }
 
-// storageTemperatureInfo — one entry per sensor.
 type storageTemperatureInfo struct {
-	Index           uint16
-	Temperature     int16 // in tenths of a degree Celsius
-	OverThreshold   int16
-	UnderThreshold  int16
+	Index          uint16
+	Temperature    int16
+	OverThreshold  int16
+	UnderThreshold int16
 	ValidThresholds byte
 	_               [1]byte
 }
 
-// storageProtocolSpecificQueryInput — additional parameters for NVMe log page queries.
-type storageProtocolSpecificData struct {
-	ProtocolType                uint32
-	DataType                    uint32
-	ProtocolDataRequestValue    uint32 // log page id for NVMe
-	ProtocolDataRequestSubValue uint32
-	ProtocolDataOffset          uint32
-	ProtocolDataLength          uint32
-	FixedProtocolReturnData     uint32
-	Reserved                    [3]uint32
-}
+// ─── physicalDriveInfo ───────────────────────────────────────────────────────
 
-// NVMe SMART/Health Information log (512 bytes).
-type nvmeSmartHealthInfo struct {
-	CriticalWarning                    byte
-	CompositeTemperature               [2]byte // Kelvin, 0.5K units? No — just uint16 Kelvin
-	AvailableSpare                     byte
-	AvailableSpareThreshold            byte
-	PercentageUsed                     byte
-	EnduranceGroupCriticalWarningSummary byte
-	_                                  [25]byte
-	DataUnitsRead                      [16]byte // 128-bit
-	DataUnitsWritten                   [16]byte
-	HostReadCommands                   [16]byte
-	HostWriteCommands                  [16]byte
-	ControllerBusyTime                 [16]byte
-	PowerCycles                        [16]byte
-	PowerOnHours                       [16]byte
-	UnsafeShutdowns                    [16]byte
-	MediaErrors                        [16]byte
-	NumberOfErrorLogEntries            [16]byte
-	WarningCompositeTemperatureTime    uint32
-	CriticalCompositeTemperatureTime   uint32
-	TemperatureSensor                  [8]uint16
-	_                                  [296]byte
-}
-
-// ─── NVMe Protocol Command (fallback for drivers that reject StorageDeviceProtocolSpecificProperty) ───
-
-// storageProtocolCommand matches Windows STORAGE_PROTOCOL_COMMAND (winioctl.h).
-// Layout is: 16 DWORD fields (64 bytes) + [3]DWORD reserved (12 bytes) + 64-byte NVMe SQE = 140 bytes.
-type storageProtocolCommand struct {
-	Version                      uint32   // STORAGE_PROTOCOL_STRUCTURE_VERSION = 1
-	Length                       uint32   // sizeof(storageProtocolCommand)
-	ProtocolType                 uint32   // ProtocolTypeNvme = 3
-	Flags                        uint32
-	ErrorCode                    uint32
-	CommandLength                uint32   // STORAGE_PROTOCOL_COMMAND_LENGTH_NVME = 64
-	ErrorInfoLength              uint32
-	DataToDeviceTransferLength   uint32
-	DataFromDeviceTransferLength uint32
-	TimeOutValue                 uint32
-	ErrorInfoOffset              uint32
-	DataToDeviceBufferOffset     uint32
-	DataFromDeviceBufferOffset   uint32   // = sizeof(storageProtocolCommand) = 140
-	CommandSpecific              uint32
-	Reserved0                    uint32
-	FixedProtocolReturnData      uint32
-	Reserved1                    [3]uint32
-	Command                      [64]byte // raw NVMe Submission Queue Entry
-}
-
-// ─── ATA PASS-THROUGH ────────────────────────────────────────────────────────
-
-type ataPassThroughEx struct {
-	Length             uint16
-	AtaFlags           uint16
-	PathId             byte
-	TargetId           byte
-	Lun                byte
-	ReservedAsUchar    byte
-	DataTransferLength uint32
-	TimeOutValue       uint32
-	ReservedAsUlong    uint32
-	DataBufferOffset   uintptr
-	PreviousTaskFile   [8]byte
-	CurrentTaskFile    [8]byte
-}
-
-const (
-	ataFlagsDataIn = 0x02 // ATA_FLAGS_DATA_IN — transfer from device to system (read)
-	ataSmartCmd    = 0xB0 // ATA_SMART_CMD
-	ataSmartReadData = 0xD0 // SMART_READ_DATA feature
-	ataSmartLba1   = 0x4F // SMART LBA mid signature
-	ataSmartLba2   = 0xC2 // SMART LBA high signature
-)
-
-// ─── PhysicalDriveInfo — result of enumerating one drive ─────────────────────
-
+// physicalDriveInfo holds all collected data for one physical drive.
+// Device identity comes from IOCTL; temperature from IOCTL with smartctl fallback;
+// all SMART health data from smartctl.
 type physicalDriveInfo struct {
 	Index   int
 	Model   string
 	Serial  string
 	BusType int
+
+	// Temperature — IOCTL primary, smartctl fallback
 	TempC   float64
 	HasTemp bool
-	// NVMe SMART
-	NVMePercentUsed    byte
-	NVMeAvailableSpare byte
-	NVMePowerOnHours   uint64
-	NVMeMediaErrors    uint64
-	NVMeHasData        bool
-	// SATA SMART attributes map: attribute id → value
-	SmartAttrs map[byte]smartAttr
+
+	// Endurance / health (NVMe + SATA SSD)
+	PercentUsed    int // % endurance consumed (0 = new, 100 = worn)
+	HasPercentUsed bool
+	SpareAvail     int // available spare %
+	HasSpareAvail  bool
+
+	// Time and errors
+	PowerOnHours    uint64
+	HasPowerOnHours bool
+	MediaErrors     uint64
+	HasMediaErrors  bool
+
+	// SATA sector health
+	ReallocatedSectors uint32
+	HasReallocated     bool
+	PendingSectors     uint32
+	HasPending         bool
 }
 
-type smartAttr struct {
-	Id            byte
-	Value         byte   // normalized 0-255
-	Worst         byte
-	RawLo         uint32
-	RawHi         uint16
-}
+// ─── Enumeration ─────────────────────────────────────────────────────────────
 
-// ─── Public entry points ──────────────────────────────────────────────────────
-
-// EnumeratePhysicalDrives opens \\.\PhysicalDriveN for N=0..15
-// and collects available data from each.
+// EnumeratePhysicalDrives opens \\.\PhysicalDriveN, reads device identity and
+// temperature via IOCTL, then collects all SMART health data via smartctl.
 func EnumeratePhysicalDrives() []physicalDriveInfo {
 	var results []physicalDriveInfo
 	consecutive := 0
@@ -244,49 +124,26 @@ func EnumeratePhysicalDrives() []physicalDriveInfo {
 			path,
 			windows.GENERIC_READ|windows.GENERIC_WRITE,
 			windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE,
-			nil,
-			windows.OPEN_EXISTING,
-			0,
-			0,
+			nil, windows.OPEN_EXISTING, 0, 0,
 		)
 		if err != nil {
 			consecutive++
 			if consecutive >= 3 {
-				break // 3 consecutive missing drives — assume no more
+				break
 			}
 			continue
 		}
 		consecutive = 0
-		info := queryDrive(h, i)
+
+		info := physicalDriveInfo{Index: i}
+		readDeviceDescriptor(h, &info)
+		readTemperature(h, &info)
 		windows.CloseHandle(h)
-		enrichWithSmartctl(&info)
+
+		collectSmartData(&info)
 		results = append(results, info)
 	}
 	return results
-}
-
-func queryDrive(h windows.Handle, index int) physicalDriveInfo {
-	info := physicalDriveInfo{Index: index, SmartAttrs: make(map[byte]smartAttr)}
-
-	// 1. Basic descriptor (model, serial, bus type)
-	readDeviceDescriptor(h, &info)
-
-	// 2. Temperature
-	readTemperature(h, &info)
-
-	// 3. SMART / health
-	switch info.BusType {
-	case busTypeNvme:
-		if !readNVMeSmart(h, &info) {
-			readNVMeSmartFallback(h, &info) // STORAGE_PROTOCOL_COMMAND fallback
-		}
-	case busTypeSata, busTypeAta:
-		readSATASmart(h, &info)
-	default:
-		readSATASmart(h, &info)
-	}
-
-	return info
 }
 
 // ─── Device descriptor ────────────────────────────────────────────────────────
@@ -295,12 +152,10 @@ func readDeviceDescriptor(h windows.Handle, info *physicalDriveInfo) {
 	q := storagePropertyQuery{PropertyId: storageDeviceProperty, QueryType: propertyStandardQuery}
 	buf := make([]byte, 512)
 	var returned uint32
-	err := windows.DeviceIoControl(h, ioctlStorageQueryProperty,
+	if err := windows.DeviceIoControl(h, ioctlStorageQueryProperty,
 		(*byte)(unsafe.Pointer(&q)), uint32(unsafe.Sizeof(q)),
-		&buf[0], uint32(len(buf)),
-		&returned, nil)
-	if err != nil {
-		log.Printf("disk: device descriptor IOCTL failed for PhysicalDrive%d: %v", info.Index, err)
+		&buf[0], uint32(len(buf)), &returned, nil); err != nil {
+		log.Printf("disk: descriptor IOCTL failed for PhysicalDrive%d: %v", info.Index, err)
 		return
 	}
 	if returned < uint32(unsafe.Sizeof(storageDeviceDescriptorHdr{})) {
@@ -340,12 +195,10 @@ func readTemperature(h windows.Handle, info *physicalDriveInfo) {
 	q := storagePropertyQuery{PropertyId: storageDeviceTemperatureProperty, QueryType: propertyStandardQuery}
 	buf := make([]byte, hdrSize+infoSize*8)
 	var returned uint32
-	err := windows.DeviceIoControl(h, ioctlStorageQueryProperty,
+	if err := windows.DeviceIoControl(h, ioctlStorageQueryProperty,
 		(*byte)(unsafe.Pointer(&q)), uint32(unsafe.Sizeof(q)),
-		&buf[0], uint32(len(buf)),
-		&returned, nil)
-	if err != nil {
-		return // StorageDeviceTemperatureProperty not supported by this drive/driver
+		&buf[0], uint32(len(buf)), &returned, nil); err != nil {
+		return
 	}
 	if returned < uint32(hdrSize) {
 		return
@@ -357,11 +210,9 @@ func readTemperature(h windows.Handle, info *physicalDriveInfo) {
 	}
 
 	entry := (*storageTemperatureInfo)(unsafe.Pointer(&buf[hdrSize]))
-	// Temperature is in tenths of a degree Celsius on Windows
-	// But some drivers report in Kelvin × 10... check for sane range:
 	raw := float64(entry.Temperature)
 	var celsius float64
-	if raw > 2000 { // looks like Kelvin*10
+	if raw > 2000 { // Kelvin*10
 		celsius = raw/10.0 - 273.15
 	} else {
 		celsius = raw / 10.0
@@ -369,193 +220,6 @@ func readTemperature(h windows.Handle, info *physicalDriveInfo) {
 	if celsius > -20 && celsius < 120 {
 		info.TempC = celsius
 		info.HasTemp = true
-	}
-}
-
-// ─── NVMe SMART ──────────────────────────────────────────────────────────────
-
-// nvmeQueryInput is the contiguous input buffer for IOCTL_STORAGE_QUERY_PROPERTY
-// with StorageDeviceProtocolSpecificProperty.
-// Layout: STORAGE_PROPERTY_QUERY header (8B) immediately followed by
-// STORAGE_PROTOCOL_SPECIFIC_DATA (40B) — no padding between them.
-type nvmeQueryInput struct {
-	// STORAGE_PROPERTY_QUERY fields:
-	PropertyId uint32
-	QueryType  uint32
-	// AdditionalParameters[0] == start of STORAGE_PROTOCOL_SPECIFIC_DATA:
-	ProtocolType                uint32
-	DataType                    uint32
-	ProtocolDataRequestValue    uint32
-	ProtocolDataRequestSubValue uint32
-	ProtocolDataOffset          uint32 // offset from start of this struct's prot section to data in output
-	ProtocolDataLength          uint32
-	FixedProtocolReturnData     uint32
-	Reserved                    [3]uint32
-}
-
-func readNVMeSmart(h windows.Handle, info *physicalDriveInfo) bool {
-	const smartSize = 512
-	const protSectionSize = 40 // sizeof STORAGE_PROTOCOL_SPECIFIC_DATA
-
-	q := nvmeQueryInput{
-		PropertyId:               storageDeviceProtocolSpecificProperty,
-		QueryType:                propertyStandardQuery,
-		ProtocolType:             protocolTypeNvme,
-		DataType:                 nvmeDataTypeLogPage,
-		ProtocolDataRequestValue: nvmeLogPageHealthInfo,
-		ProtocolDataOffset:       protSectionSize,
-		ProtocolDataLength:       smartSize,
-	}
-
-	outBuf := make([]byte, int(unsafe.Sizeof(q))+smartSize)
-	var returned uint32
-	err := windows.DeviceIoControl(h, ioctlStorageQueryProperty,
-		(*byte)(unsafe.Pointer(&q)), uint32(unsafe.Sizeof(q)),
-		&outBuf[0], uint32(len(outBuf)),
-		&returned, nil)
-	if err != nil {
-		return false
-	}
-
-	offset := int(unsafe.Sizeof(q))
-	if int(returned) < offset+512 {
-		log.Printf("disk: NVMe SMART response too short (%d bytes) for PhysicalDrive%d", returned, info.Index)
-		return false
-	}
-
-	parseNVMeHealth(outBuf[offset:], info)
-	return true
-}
-
-// readNVMeSmartFallback uses IOCTL_STORAGE_PROTOCOL_COMMAND to send a raw NVMe
-// Get Log Page admin command (opcode 0x02, log page 0x02 = SMART/Health Info).
-// This works on some drivers that reject StorageDeviceProtocolSpecificProperty.
-func readNVMeSmartFallback(h windows.Handle, info *physicalDriveInfo) {
-	const smartSize = 512
-	cmdSize := uint32(unsafe.Sizeof(storageProtocolCommand{}))
-	totalSize := cmdSize + smartSize
-
-	buf := make([]byte, totalSize)
-	cmd := (*storageProtocolCommand)(unsafe.Pointer(&buf[0]))
-	cmd.Version = 1 // STORAGE_PROTOCOL_STRUCTURE_VERSION
-	cmd.Length = cmdSize
-	cmd.ProtocolType = protocolTypeNvme
-	cmd.Flags = 0
-	cmd.CommandLength = 64 // STORAGE_PROTOCOL_COMMAND_LENGTH_NVME
-	cmd.ErrorInfoLength = 0
-	cmd.DataFromDeviceTransferLength = smartSize
-	cmd.TimeOutValue = 10
-	cmd.ErrorInfoOffset = 0
-	cmd.DataFromDeviceBufferOffset = cmdSize
-
-	// NVMe Submission Queue Entry: Get Log Page (Admin Opcode 0x02)
-	// SQE bytes 0-3 = CDW0: opcode
-	cmd.Command[0] = 0x02
-	// SQE bytes 4-7 = NSID: 0xFFFFFFFF (global, applies to all namespaces)
-	cmd.Command[4] = 0xFF
-	cmd.Command[5] = 0xFF
-	cmd.Command[6] = 0xFF
-	cmd.Command[7] = 0xFF
-	// SQE bytes 40-43 = CDW10: LID[7:0]=0x02 (SMART log), NUMDL[31:16]=0x7F (127 → 128 DWORDs = 512 bytes)
-	binary.LittleEndian.PutUint32(cmd.Command[40:44], (127<<16)|0x02)
-
-	var returned uint32
-	err := windows.DeviceIoControl(h, ioctlStorageProtocolCommand,
-		&buf[0], totalSize,
-		&buf[0], totalSize,
-		&returned, nil)
-	if err != nil || int(returned) < int(cmdSize)+512 {
-		return
-	}
-
-	parseNVMeHealth(buf[cmdSize:], info)
-}
-
-func parseNVMeHealth(data []byte, info *physicalDriveInfo) {
-	if len(data) < 512 {
-		return
-	}
-	smart := (*nvmeSmartHealthInfo)(unsafe.Pointer(&data[0]))
-
-	tempK := uint16(smart.CompositeTemperature[0]) | uint16(smart.CompositeTemperature[1])<<8
-	if tempK > 273 && !info.HasTemp {
-		info.TempC = float64(tempK) - 273.15
-		info.HasTemp = true
-	}
-
-	info.NVMePercentUsed = smart.PercentageUsed
-	info.NVMeAvailableSpare = smart.AvailableSpare
-	info.NVMePowerOnHours = binary.LittleEndian.Uint64(smart.PowerOnHours[:8])
-	info.NVMeMediaErrors = binary.LittleEndian.Uint64(smart.MediaErrors[:8])
-	info.NVMeHasData = true
-}
-
-// ─── SATA/ATA SMART ──────────────────────────────────────────────────────────
-
-func readSATASmart(h windows.Handle, info *physicalDriveInfo) {
-	// ATA PASS-THROUGH: SMART READ DATA (command B0h, feature D0h)
-	const dataSize = 512
-	type ataBuf struct {
-		apt  ataPassThroughEx
-		data [dataSize]byte
-	}
-
-	buf := ataBuf{}
-	buf.apt.Length = uint16(unsafe.Sizeof(ataPassThroughEx{}))
-	buf.apt.AtaFlags = ataFlagsDataIn
-	buf.apt.DataTransferLength = dataSize
-	buf.apt.TimeOutValue = 10
-	buf.apt.DataBufferOffset = unsafe.Sizeof(ataPassThroughEx{})
-	// ATA_PASS_THROUGH_EX CurrentTaskFile register layout:
-	// [0]=Features [1]=SectorCount [2]=LBALow [3]=LBAMid [4]=LBAHigh [5]=Device [6]=Command [7]=Reserved
-	buf.apt.CurrentTaskFile[0] = ataSmartReadData // Features = 0xD0 (SMART Read Data)
-	buf.apt.CurrentTaskFile[1] = 1                // Sector Count = 1
-	buf.apt.CurrentTaskFile[2] = 0                // LBA Low = 0
-	buf.apt.CurrentTaskFile[3] = ataSmartLba1     // LBA Mid = 0x4F (SMART signature)
-	buf.apt.CurrentTaskFile[4] = ataSmartLba2     // LBA High = 0xC2 (SMART signature)
-	buf.apt.CurrentTaskFile[5] = 0xA0             // Device
-	buf.apt.CurrentTaskFile[6] = ataSmartCmd      // Command = 0xB0
-
-	var returned uint32
-	err := windows.DeviceIoControl(h, ioctlAtaPassThrough,
-		(*byte)(unsafe.Pointer(&buf)), uint32(unsafe.Sizeof(buf)),
-		(*byte)(unsafe.Pointer(&buf)), uint32(unsafe.Sizeof(buf)),
-		&returned, nil)
-	if err != nil {
-		log.Printf("disk: ATA SMART IOCTL failed for PhysicalDrive%d: %v", info.Index, err)
-		return
-	}
-
-	// Parse SMART attribute table: starts at offset 2 in the 512-byte data.
-	// Each entry is 12 bytes: ID(1), Flags(2), Value(1), Worst(1), Raw[6], Reserved(1)
-	data := buf.data[:]
-	for i := 2; i+12 <= 362; i += 12 {
-		id := data[i]
-		if id == 0 {
-			continue
-		}
-		attr := smartAttr{
-			Id:    id,
-			Value: data[i+3],
-			Worst: data[i+4],
-			RawLo: uint32(data[i+5]) | uint32(data[i+6])<<8 | uint32(data[i+7])<<16 | uint32(data[i+8])<<24,
-			RawHi: uint16(data[i+9]) | uint16(data[i+10])<<8,
-		}
-		info.SmartAttrs[id] = attr
-	}
-
-	// Temperature: attr 0xBE (194 = Temperature) or 0xC2 (194 decimal)
-	// Attr 194 = Temperature_Celsius or HDA_Temperature
-	for _, tempId := range []byte{0xC2, 0xBE} {
-		if a, ok := info.SmartAttrs[tempId]; ok && a.Value > 0 {
-			// Raw low byte is current temperature in Celsius for most drives
-			t := float64(a.RawLo & 0xFF)
-			if t > 0 && t < 100 {
-				info.TempC = t
-				info.HasTemp = true
-				break
-			}
-		}
 	}
 }
 

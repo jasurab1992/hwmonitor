@@ -9,12 +9,11 @@ import (
 
 const busTypeNVMe = busTypeNvme
 
-// NVMeCollector collects NVMe health metrics via direct IOCTL.
+// NVMeCollector collects NVMe health metrics via smartctl.
 type NVMeCollector struct{}
 
 func NewNVMeCollector() *NVMeCollector { return &NVMeCollector{} }
-
-func (n *NVMeCollector) Name() string { return "nvme" }
+func (n *NVMeCollector) Name() string  { return "nvme" }
 
 func (n *NVMeCollector) Collect() ([]Metric, error) {
 	drives := EnumeratePhysicalDrives()
@@ -41,26 +40,31 @@ func (n *NVMeCollector) Collect() ([]Metric, error) {
 				Labels: copyLabels(labels),
 			})
 		}
-
-		if d.NVMeHasData {
+		if d.HasPercentUsed {
 			metrics = append(metrics, Metric{
 				Name:   "nvme_percentage_used",
-				Value:  float64(d.NVMePercentUsed),
+				Value:  float64(d.PercentUsed),
 				Labels: copyLabels(labels),
 			})
+		}
+		if d.HasSpareAvail {
 			metrics = append(metrics, Metric{
 				Name:   "nvme_available_spare_percent",
-				Value:  float64(d.NVMeAvailableSpare),
+				Value:  float64(d.SpareAvail),
 				Labels: copyLabels(labels),
 			})
+		}
+		if d.HasPowerOnHours {
 			metrics = append(metrics, Metric{
 				Name:   "nvme_power_on_hours",
-				Value:  float64(d.NVMePowerOnHours),
+				Value:  float64(d.PowerOnHours),
 				Labels: copyLabels(labels),
 			})
+		}
+		if d.HasMediaErrors {
 			metrics = append(metrics, Metric{
 				Name:   "nvme_media_errors_total",
-				Value:  float64(d.NVMeMediaErrors),
+				Value:  float64(d.MediaErrors),
 				Labels: copyLabels(labels),
 			})
 		}
@@ -69,6 +73,5 @@ func (n *NVMeCollector) Collect() ([]Metric, error) {
 	if len(metrics) == 0 {
 		log.Printf("nvme: no NVMe drives found or no data available")
 	}
-
 	return metrics, nil
 }
