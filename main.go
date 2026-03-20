@@ -72,6 +72,7 @@ func main() {
 	defer cancel()
 	defer collectors.CleanupRing0()
 	defer collectors.CleanupSmartctl()
+	defer collectors.CleanupIPMI()
 
 	// Handle Ctrl+C
 	sigCh := make(chan os.Signal, 1)

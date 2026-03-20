@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -20,13 +21,27 @@ func NewIPMICollector() *IPMICollector { return &IPMICollector{} }
 func (c *IPMICollector) Name() string  { return "ipmi" }
 
 var (
-	ipmitoolOnce  sync.Once
-	ipmitoolBin   string
-	ipmitoolReady bool
+	ipmitoolOnce    sync.Once
+	ipmitoolBin     string
+	ipmitoolReady   bool
+	ipmitoolTempBin string
 )
 
 func initIpmitool() {
 	ipmitoolOnce.Do(func() {
+		// 1. Extract embedded binary (when built with -tags embed_ipmitool).
+		if len(ipmitoolEmbedded) > 0 {
+			tmp := filepath.Join(os.TempDir(), "hwmon_ipmitool.exe")
+			if err := os.WriteFile(tmp, ipmitoolEmbedded, 0700); err == nil {
+				ipmitoolBin = tmp
+				ipmitoolTempBin = tmp
+				ipmitoolReady = true
+				log.Printf("ipmi: using embedded ipmitool")
+				return
+			}
+		}
+
+		// 2. Fall back to PATH and common install locations.
 		candidates := []string{
 			"ipmitool",
 			`C:\Program Files\ipmitool\ipmitool.exe`,
@@ -49,6 +64,13 @@ func initIpmitool() {
 		}
 		log.Printf("ipmi: ipmitool not found — install for BMC/ambient temperatures")
 	})
+}
+
+// CleanupIPMI removes the temporary extracted ipmitool.exe (if any).
+func CleanupIPMI() {
+	if ipmitoolTempBin != "" {
+		os.Remove(ipmitoolTempBin)
+	}
 }
 
 func (c *IPMICollector) Collect() ([]Metric, error) {
