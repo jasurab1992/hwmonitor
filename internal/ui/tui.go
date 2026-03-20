@@ -13,17 +13,17 @@ import (
 )
 
 const (
-	barWidth   = 30
-	barFilled  = '█'
-	barEmpty   = '░'
-	colorReset = "\033[0m"
-	colorBold  = "\033[1m"
-	colorGreen = "\033[32m"
+	barWidth    = 28
+	barFilled   = '█'
+	barEmpty    = '░'
+	colorReset  = "\033[0m"
+	colorBold   = "\033[1m"
+	colorGreen  = "\033[32m"
 	colorYellow = "\033[33m"
-	colorRed   = "\033[31m"
-	colorCyan  = "\033[36m"
-	colorWhite = "\033[37m"
-	colorDim   = "\033[2m"
+	colorRed    = "\033[31m"
+	colorCyan   = "\033[36m"
+	colorWhite  = "\033[37m"
+	colorDim    = "\033[2m"
 	clearScreen = "\033[2J\033[H"
 )
 
@@ -33,20 +33,14 @@ type TUI struct {
 	interval   time.Duration
 }
 
-// NewTUI creates a new TUI instance.
 func NewTUI(colls []collectors.Collector, interval time.Duration) *TUI {
-	return &TUI{
-		collectors: colls,
-		interval:   interval,
-	}
+	return &TUI{collectors: colls, interval: interval}
 }
 
-// Run starts the TUI loop. It blocks until the context is cancelled.
 func (t *TUI) Run(ctx context.Context) error {
 	ticker := time.NewTicker(t.interval)
 	defer ticker.Stop()
 
-	// Initial render
 	t.render()
 
 	for {
@@ -65,17 +59,14 @@ func (t *TUI) render() {
 	var sb strings.Builder
 
 	sb.WriteString(clearScreen)
-
-	// Header
 	sb.WriteString(colorBold + colorCyan)
 	sb.WriteString("╔══════════════════════════════════════════════════════════╗\n")
-	sb.WriteString("║          HWmonitor — Hardware Monitor                   ║\n")
+	sb.WriteString("║           HWmonitor — Hardware Monitor                  ║\n")
 	sb.WriteString("╚══════════════════════════════════════════════════════════╝\n")
 	sb.WriteString(colorReset)
 	sb.WriteString(colorDim + fmt.Sprintf("  Updated: %s    Press Ctrl+C to exit\n", time.Now().Format("15:04:05")) + colorReset)
 	sb.WriteString("\n")
 
-	// Collect all metrics
 	allMetrics := make(map[string][]collectors.Metric)
 	for _, c := range t.collectors {
 		metrics, err := c.Collect()
@@ -86,27 +77,80 @@ func (t *TUI) render() {
 		allMetrics[c.Name()] = metrics
 	}
 
-	// CPU section
-	if cpuMetrics, ok := allMetrics["cpu"]; ok {
-		renderCPUSection(&sb, cpuMetrics)
+	if m, ok := allMetrics["sysinfo"]; ok && len(m) > 0 {
+		renderSysInfoSection(&sb, m)
 	}
-
-	// Memory section
-	if memMetrics, ok := allMetrics["memory"]; ok {
-		renderMemorySection(&sb, memMetrics)
+	if m, ok := allMetrics["cpu"]; ok {
+		renderCPUSection(&sb, m)
 	}
-
-	// Disk section
-	if diskMetrics, ok := allMetrics["disk"]; ok {
-		renderDiskSection(&sb, diskMetrics)
+	if m, ok := allMetrics["memory"]; ok {
+		renderMemorySection(&sb, m)
 	}
+	// Temperatures: prefer sensors (LHM/OHM per-core), fall back to cpu_temp (ACPI zones)
+	sensorsM := allMetrics["sensors"]
+	cpuTempM := allMetrics["cpu_temp"]
+	nvmeM := allMetrics["nvme"]
+	smartM := allMetrics["smart"]
+	renderTemperaturesSection(&sb, sensorsM, cpuTempM, nvmeM, smartM)
 
-	// NVMe section
-	if nvmeMetrics, ok := allMetrics["nvme"]; ok && len(nvmeMetrics) > 0 {
-		renderNVMeSection(&sb, nvmeMetrics)
+	if len(sensorsM) > 0 {
+		renderVoltagesSection(&sb, sensorsM)
+		renderFansSection(&sb, sensorsM)
+	}
+	if m, ok := allMetrics["disk"]; ok {
+		renderDiskSection(&sb, m)
+	}
+	if len(nvmeM) > 0 {
+		renderNVMeSmartSection(&sb, nvmeM)
+	}
+	if len(smartM) > 0 {
+		renderSATASmartSection(&sb, smartM)
+	}
+	if m, ok := allMetrics["network"]; ok && len(m) > 0 {
+		renderNetworkSection(&sb, m)
 	}
 
 	fmt.Fprint(os.Stdout, sb.String())
+}
+
+// ─── Section renderers ─────────────────────────────────────────────────────
+
+func renderSysInfoSection(sb *strings.Builder, metrics []collectors.Metric) {
+	sb.WriteString(sectionHeader("System Info"))
+
+	for _, m := range metrics {
+		switch m.Name {
+		case "sysinfo_baseboard_info":
+			sb.WriteString(fmt.Sprintf("  Motherboard: %s %s\n",
+				m.Labels["manufacturer"], m.Labels["product"]))
+		case "sysinfo_bios_info":
+			sb.WriteString(fmt.Sprintf("  BIOS:        %s\n", m.Labels["version"]))
+		case "sysinfo_cpu_cores":
+			sb.WriteString(fmt.Sprintf("  CPU:         %s\n", m.Labels["processor"]))
+			sb.WriteString(fmt.Sprintf("               %d cores", int(m.Value)))
+		case "sysinfo_cpu_threads":
+			sb.WriteString(fmt.Sprintf(" / %d threads\n", int(m.Value)))
+		}
+	}
+
+	// RAM modules
+	var ramLines []string
+	totalRAM := 0.0
+	for _, m := range metrics {
+		if m.Name == "sysinfo_memory_module_bytes" {
+			gb := m.Value / (1024 * 1024 * 1024)
+			totalRAM += gb
+			ramLines = append(ramLines, fmt.Sprintf("    Slot %s: %.0f GB %s @ %s MHz",
+				m.Labels["slot"], gb, m.Labels["type"], m.Labels["speed_mhz"]))
+		}
+	}
+	if len(ramLines) > 0 {
+		sb.WriteString(fmt.Sprintf("  RAM:         %.0f GB total\n", totalRAM))
+		for _, l := range ramLines {
+			sb.WriteString(l + "\n")
+		}
+	}
+	sb.WriteString("\n")
 }
 
 func renderCPUSection(sb *strings.Builder, metrics []collectors.Metric) {
@@ -123,19 +167,14 @@ func renderCPUSection(sb *strings.Builder, metrics []collectors.Metric) {
 		}
 	}
 
-	// Per-core usage
-	type coreUsage struct {
-		core string
-		pct  float64
-	}
+	type coreUsage struct{ core string; pct float64 }
 	var cores []coreUsage
 	for _, m := range metrics {
 		if m.Name == "cpu_core_usage_percent" {
-			cores = append(cores, coreUsage{core: m.Labels["core"], pct: m.Value})
+			cores = append(cores, coreUsage{m.Labels["core"], m.Value})
 		}
 	}
 	sort.Slice(cores, func(i, j int) bool { return cores[i].core < cores[j].core })
-
 	if len(cores) > 0 {
 		sb.WriteString("  Per-Core:\n")
 		for _, c := range cores {
@@ -149,22 +188,108 @@ func renderMemorySection(sb *strings.Builder, metrics []collectors.Metric) {
 	sb.WriteString(sectionHeader("Memory"))
 
 	values := metricMap(metrics)
-
 	if total, ok := values["memory_total_bytes"]; ok {
 		used := values["memory_used_bytes"]
 		avail := values["memory_available_bytes"]
 		pct := values["memory_usage_percent"]
-		sb.WriteString(fmt.Sprintf("  RAM:       %s %5.1f%%\n", progressBar(pct, 100), pct))
-		sb.WriteString(fmt.Sprintf("             Used: %s / %s  (Available: %s)\n",
+		sb.WriteString(fmt.Sprintf("  RAM:   %s %5.1f%%\n", progressBar(pct, 100), pct))
+		sb.WriteString(fmt.Sprintf("         Used: %s / %s  (Free: %s)\n",
 			formatBytes(used), formatBytes(total), formatBytes(avail)))
 	}
-
 	if swapTotal, ok := values["swap_total_bytes"]; ok && swapTotal > 0 {
 		swapUsed := values["swap_used_bytes"]
 		swapPct := values["swap_usage_percent"]
-		sb.WriteString(fmt.Sprintf("  Swap:      %s %5.1f%%\n", progressBar(swapPct, 100), swapPct))
-		sb.WriteString(fmt.Sprintf("             Used: %s / %s\n",
-			formatBytes(swapUsed), formatBytes(swapTotal)))
+		sb.WriteString(fmt.Sprintf("  Swap:  %s %5.1f%%\n", progressBar(swapPct, 100), swapPct))
+		sb.WriteString(fmt.Sprintf("         Used: %s / %s\n", formatBytes(swapUsed), formatBytes(swapTotal)))
+	}
+	sb.WriteString("\n")
+}
+
+func renderTemperaturesSection(sb *strings.Builder, sensorsM, cpuTempM, nvmeM, smartM []collectors.Metric) {
+	var lines []string
+
+	// From sensors (LHM/OHM) — per-core CPU temps
+	for _, m := range sensorsM {
+		if m.Name == "sensor_temperature_celsius" {
+			lines = append(lines, fmt.Sprintf("  %-30s %s%.0f°C%s",
+				m.Labels["name"], tempColor(m.Value), m.Value, colorReset))
+		}
+	}
+
+	// Fallback: ACPI thermal zones (if no LHM sensor temps)
+	if len(lines) == 0 {
+		for _, m := range cpuTempM {
+			if m.Name == "cpu_temp_celsius" {
+				zone := m.Labels["zone"]
+				src := m.Labels["source"]
+				lines = append(lines, fmt.Sprintf("  %-30s %s%.1f°C%s  (%s)",
+					zone, tempColor(m.Value), m.Value, colorReset, src))
+			}
+		}
+	}
+
+	// NVMe temps
+	seen := map[string]bool{}
+	for _, m := range nvmeM {
+		if m.Name == "nvme_temperature_celsius" {
+			dev := m.Labels["device"]
+			if !seen[dev] {
+				seen[dev] = true
+				lines = append(lines, fmt.Sprintf("  %-30s %s%.0f°C%s",
+					"NVMe "+dev, tempColor(m.Value), m.Value, colorReset))
+			}
+		}
+	}
+
+	// SATA/HDD temps
+	for _, m := range smartM {
+		if m.Name == "smart_temp_celsius" {
+			dev := m.Labels["device"]
+			lines = append(lines, fmt.Sprintf("  %-30s %s%.0f°C%s",
+				"SATA "+dev, tempColor(m.Value), m.Value, colorReset))
+		}
+	}
+
+	if len(lines) == 0 {
+		return
+	}
+	sb.WriteString(sectionHeader("Temperatures"))
+	for _, l := range lines {
+		sb.WriteString(l + "\n")
+	}
+	sb.WriteString("\n")
+}
+
+func renderVoltagesSection(sb *strings.Builder, metrics []collectors.Metric) {
+	var lines []string
+	for _, m := range metrics {
+		if m.Name == "sensor_voltage_volts" {
+			lines = append(lines, fmt.Sprintf("  %-30s %.3f V", m.Labels["name"], m.Value))
+		}
+	}
+	if len(lines) == 0 {
+		return
+	}
+	sb.WriteString(sectionHeader("Voltages"))
+	for _, l := range lines {
+		sb.WriteString(l + "\n")
+	}
+	sb.WriteString("\n")
+}
+
+func renderFansSection(sb *strings.Builder, metrics []collectors.Metric) {
+	var lines []string
+	for _, m := range metrics {
+		if m.Name == "sensor_fan_rpm" && m.Value > 0 {
+			lines = append(lines, fmt.Sprintf("  %-30s %.0f RPM", m.Labels["name"], m.Value))
+		}
+	}
+	if len(lines) == 0 {
+		return
+	}
+	sb.WriteString(sectionHeader("Fans"))
+	for _, l := range lines {
+		sb.WriteString(l + "\n")
 	}
 	sb.WriteString("\n")
 }
@@ -172,27 +297,18 @@ func renderMemorySection(sb *strings.Builder, metrics []collectors.Metric) {
 func renderDiskSection(sb *strings.Builder, metrics []collectors.Metric) {
 	sb.WriteString(sectionHeader("Disk"))
 
-	// Group usage metrics by mountpoint
 	type diskUsage struct {
-		device     string
-		mountpoint string
-		total      float64
-		used       float64
-		free       float64
-		pct        float64
+		device, mountpoint string
+		total, used, free, pct float64
 	}
 	usageMap := make(map[string]*diskUsage)
-
 	for _, m := range metrics {
 		mp := m.Labels["mountpoint"]
 		if mp == "" {
 			continue
 		}
 		if _, ok := usageMap[mp]; !ok {
-			usageMap[mp] = &diskUsage{
-				device:     m.Labels["device"],
-				mountpoint: mp,
-			}
+			usageMap[mp] = &diskUsage{device: m.Labels["device"], mountpoint: mp}
 		}
 		du := usageMap[mp]
 		switch m.Name {
@@ -207,13 +323,11 @@ func renderDiskSection(sb *strings.Builder, metrics []collectors.Metric) {
 		}
 	}
 
-	// Sort mountpoints
 	var mps []string
 	for mp := range usageMap {
 		mps = append(mps, mp)
 	}
 	sort.Strings(mps)
-
 	for _, mp := range mps {
 		du := usageMap[mp]
 		sb.WriteString(fmt.Sprintf("  %-10s %s %5.1f%%  (%s / %s)\n",
@@ -221,16 +335,12 @@ func renderDiskSection(sb *strings.Builder, metrics []collectors.Metric) {
 			formatBytes(du.used), formatBytes(du.total)))
 	}
 
-	// I/O stats
 	type ioStat struct {
-		device     string
-		readBytes  float64
-		writeBytes float64
-		readCount  float64
-		writeCount float64
+		device             string
+		readBytes, writeBytes float64
+		readCount, writeCount float64
 	}
 	ioMap := make(map[string]*ioStat)
-
 	for _, m := range metrics {
 		dev := m.Labels["device"]
 		if dev == "" || m.Labels["mountpoint"] != "" {
@@ -253,7 +363,7 @@ func renderDiskSection(sb *strings.Builder, metrics []collectors.Metric) {
 	}
 
 	if len(ioMap) > 0 {
-		sb.WriteString("  I/O:\n")
+		sb.WriteString("  I/O totals:\n")
 		var devs []string
 		for dev := range ioMap {
 			devs = append(devs, dev)
@@ -261,30 +371,20 @@ func renderDiskSection(sb *strings.Builder, metrics []collectors.Metric) {
 		sort.Strings(devs)
 		for _, dev := range devs {
 			io := ioMap[dev]
-			sb.WriteString(fmt.Sprintf("    %-10s R: %s (%s ops)  W: %s (%s ops)\n",
-				dev,
-				formatBytes(io.readBytes), formatCount(io.readCount),
-				formatBytes(io.writeBytes), formatCount(io.writeCount)))
+			sb.WriteString(fmt.Sprintf("    %-12s R: %-10s  W: %s\n",
+				dev, formatBytes(io.readBytes), formatBytes(io.writeBytes)))
 		}
 	}
 	sb.WriteString("\n")
 }
 
-func renderNVMeSection(sb *strings.Builder, metrics []collectors.Metric) {
+func renderNVMeSmartSection(sb *strings.Builder, metrics []collectors.Metric) {
 	sb.WriteString(sectionHeader("NVMe SMART"))
 
-	// Group by device
 	type nvmeInfo struct {
-		temp     float64
-		spare    float64
-		used     float64
-		hours    float64
-		cycles   float64
-		unsafe   float64
-		mediaErr float64
+		used, hours, readErr, writeErr float64
 	}
 	devMap := make(map[string]*nvmeInfo)
-
 	for _, m := range metrics {
 		dev := m.Labels["device"]
 		if _, ok := devMap[dev]; !ok {
@@ -292,20 +392,14 @@ func renderNVMeSection(sb *strings.Builder, metrics []collectors.Metric) {
 		}
 		info := devMap[dev]
 		switch m.Name {
-		case "nvme_temperature_celsius":
-			info.temp = m.Value
-		case "nvme_available_spare_percent":
-			info.spare = m.Value
 		case "nvme_percentage_used":
 			info.used = m.Value
 		case "nvme_power_on_hours":
 			info.hours = m.Value
-		case "nvme_power_cycles":
-			info.cycles = m.Value
-		case "nvme_unsafe_shutdowns":
-			info.unsafe = m.Value
-		case "nvme_media_errors":
-			info.mediaErr = m.Value
+		case "nvme_read_errors_total":
+			info.readErr = m.Value
+		case "nvme_write_errors_total":
+			info.writeErr = m.Value
 		}
 	}
 
@@ -318,18 +412,96 @@ func renderNVMeSection(sb *strings.Builder, metrics []collectors.Metric) {
 	for _, dev := range devs {
 		info := devMap[dev]
 		sb.WriteString(fmt.Sprintf("  %s%s%s\n", colorBold, dev, colorReset))
-		sb.WriteString(fmt.Sprintf("    Temperature:    %s%.0f°C%s\n", tempColor(info.temp), info.temp, colorReset))
-		sb.WriteString(fmt.Sprintf("    Available Spare: %.0f%%\n", info.spare))
-		sb.WriteString(fmt.Sprintf("    Wear (Used):    %.0f%%\n", info.used))
+		sb.WriteString(fmt.Sprintf("    Wear used:      %.0f%%\n", info.used))
 		sb.WriteString(fmt.Sprintf("    Power On Hours: %.0f h\n", info.hours))
-		sb.WriteString(fmt.Sprintf("    Power Cycles:   %.0f\n", info.cycles))
-		sb.WriteString(fmt.Sprintf("    Unsafe Shutdowns: %.0f\n", info.unsafe))
-		sb.WriteString(fmt.Sprintf("    Media Errors:   %.0f\n", info.mediaErr))
+		sb.WriteString(fmt.Sprintf("    Read Errors:    %.0f\n", info.readErr))
+		sb.WriteString(fmt.Sprintf("    Write Errors:   %.0f\n", info.writeErr))
 	}
 	sb.WriteString("\n")
 }
 
-// Helper functions
+func renderSATASmartSection(sb *strings.Builder, metrics []collectors.Metric) {
+	sb.WriteString(sectionHeader("SATA SMART"))
+
+	type smartInfo struct {
+		pctUsed, hours, readErr, writeErr float64
+	}
+	devMap := make(map[string]*smartInfo)
+	for _, m := range metrics {
+		dev := m.Labels["device"]
+		if _, ok := devMap[dev]; !ok {
+			devMap[dev] = &smartInfo{}
+		}
+		info := devMap[dev]
+		switch m.Name {
+		case "smart_percentage_used":
+			info.pctUsed = m.Value
+		case "smart_power_on_hours":
+			info.hours = m.Value
+		case "smart_read_errors_total":
+			info.readErr = m.Value
+		case "smart_write_errors_total":
+			info.writeErr = m.Value
+		}
+	}
+
+	var devs []string
+	for dev := range devMap {
+		devs = append(devs, dev)
+	}
+	sort.Strings(devs)
+
+	for _, dev := range devs {
+		info := devMap[dev]
+		sb.WriteString(fmt.Sprintf("  %s%s%s\n", colorBold, dev, colorReset))
+		if info.pctUsed > 0 {
+			sb.WriteString(fmt.Sprintf("    Wear used:      %.0f%%\n", info.pctUsed))
+		}
+		sb.WriteString(fmt.Sprintf("    Power On Hours: %.0f h\n", info.hours))
+		sb.WriteString(fmt.Sprintf("    Read Errors:    %.0f\n", info.readErr))
+		sb.WriteString(fmt.Sprintf("    Write Errors:   %.0f\n", info.writeErr))
+	}
+	sb.WriteString("\n")
+}
+
+func renderNetworkSection(sb *strings.Builder, metrics []collectors.Metric) {
+	sb.WriteString(sectionHeader("Network"))
+
+	type ifStat struct {
+		sent, recv float64
+	}
+	ifMap := make(map[string]*ifStat)
+	for _, m := range metrics {
+		iface := m.Labels["interface"]
+		if _, ok := ifMap[iface]; !ok {
+			ifMap[iface] = &ifStat{}
+		}
+		switch m.Name {
+		case "network_bytes_sent_total":
+			ifMap[iface].sent = m.Value
+		case "network_bytes_recv_total":
+			ifMap[iface].recv = m.Value
+		}
+	}
+
+	var ifaces []string
+	for iface := range ifMap {
+		ifaces = append(ifaces, iface)
+	}
+	sort.Strings(ifaces)
+
+	for _, iface := range ifaces {
+		st := ifMap[iface]
+		if st.sent == 0 && st.recv == 0 {
+			continue
+		}
+		sb.WriteString(fmt.Sprintf("  %-20s  ↑ %-10s  ↓ %s\n",
+			iface, formatBytes(st.sent), formatBytes(st.recv)))
+	}
+	sb.WriteString("\n")
+}
+
+// ─── Helpers ───────────────────────────────────────────────────────────────
 
 func sectionHeader(name string) string {
 	return fmt.Sprintf("%s%s── %s ──%s\n", colorBold, colorCyan, name, colorReset)

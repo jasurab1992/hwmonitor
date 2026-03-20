@@ -51,6 +51,9 @@ func main() {
 	if cfg.Collectors.SysInfo {
 		colls = append(colls, collectors.NewSysInfoCollector())
 	}
+	if cfg.Collectors.Sensors {
+		colls = append(colls, collectors.NewSensorsCollector())
+	}
 
 	if len(colls) == 0 {
 		log.Fatal("no collectors enabled in config")

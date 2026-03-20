@@ -17,6 +17,7 @@ type CollectorsConfig struct {
 	SMART   bool `yaml:"smart"`
 	Network bool `yaml:"network"`
 	SysInfo bool `yaml:"sysinfo"`
+	Sensors bool `yaml:"sensors"`
 }
 
 // Config holds the application configuration.
@@ -40,6 +41,7 @@ func DefaultConfig() *Config {
 			SMART:   true,
 			Network: true,
 			SysInfo: true,
+			Sensors: true,
 		},
 	}
 }

@@ -5,3 +5,8 @@ collectors:
   memory: true
   disk: true
   nvme: true
+  cpu_temp: true
+  smart: true
+  network: true
+  sysinfo: true
+  sensors: true
