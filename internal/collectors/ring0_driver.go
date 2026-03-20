@@ -130,6 +130,12 @@ func startService(m *mgr.Mgr) error {
 	}
 	defer s.Close()
 
+	// If a previous run left the service disabled, re-enable it.
+	if cfg, err := s.Config(); err == nil && cfg.StartType == mgr.StartDisabled {
+		cfg.StartType = mgr.StartManual
+		_ = s.UpdateConfig(cfg)
+	}
+
 	if err := s.Start(); err != nil {
 		// Already running is fine
 		st, _ := s.Query()

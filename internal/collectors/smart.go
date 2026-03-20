@@ -68,14 +68,29 @@ func (s *SMARTCollector) Collect() ([]Metric, error) {
 		//   0xD1 (209) = Remaining Life Percentage   — SandForce controllers
 		//   0xAA (170) = Available Reserved Space    — Intel Optane
 		for _, wearId := range []byte{0xE7, 0xE9, 0xB4, 0xCA, 0xD1, 0xAA} {
-			if a, ok := d.SmartAttrs[wearId]; ok && a.Value > 0 && a.Value <= 100 {
-				metrics = append(metrics, Metric{
-					Name:   "smart_life_remaining_percent",
-					Value:  float64(a.Value),
-					Labels: copyLabels(labels),
-				})
-				break
+			a, ok := d.SmartAttrs[wearId]
+			if !ok {
+				continue
 			}
+			// Value is normalized life-remaining (100 = new, 0 = end-of-life).
+			// Accept 0 only if RawLo is also 0 (Samsung reports Value=0 on fresh drives
+			// for some firmware versions where 0 means "no wear accumulated yet").
+			// Reject values >100 (drive uses 0-253 scale for a different purpose).
+			if a.Value > 100 {
+				continue
+			}
+			lifeRemaining := float64(a.Value)
+			if a.Value == 0 && a.RawLo == 0 {
+				lifeRemaining = 100 // fresh drive, attr present but zero-initialized
+			} else if a.Value == 0 {
+				continue // Value=0 with non-zero raw → genuinely worn out or wrong attr
+			}
+			metrics = append(metrics, Metric{
+				Name:   "smart_life_remaining_percent",
+				Value:  lifeRemaining,
+				Labels: copyLabels(labels),
+			})
+			break
 		}
 
 		// Pending sectors: attr 0xC5 (197)
