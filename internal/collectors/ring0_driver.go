@@ -70,7 +70,9 @@ func startRing0Driver() (ok bool, cleanup func()) {
 	}
 	defer m.Disconnect()
 
-	// Step 4: create or open the service
+	// Step 4: create or open the service.
+	// If the service already exists, update its ImagePath to the freshly
+	// extracted .sys (a previous cleanup may have deleted the old one).
 	s, err := m.OpenService(ring0ServiceName)
 	if err != nil {
 		s, err = m.CreateService(ring0ServiceName, tmpSys, mgr.Config{
@@ -85,12 +87,20 @@ func startRing0Driver() (ok bool, cleanup func()) {
 			return false, nil
 		}
 		log.Printf("ring0: service created")
+	} else {
+		// Existing service — refresh path and ensure it is not disabled.
+		if cfg, err := s.Config(); err == nil {
+			cfg.BinaryPathName = tmpSys
+			cfg.StartType = mgr.StartManual
+			_ = s.UpdateConfig(cfg)
+		}
 	}
 	s.Close()
 
 	// Step 5: start the service
 	if err := startService(m); err != nil {
 		log.Printf("ring0: start failed: %v", err)
+		log.Printf("ring0: if Secure Boot / HVCI is active, unsigned drivers cannot load — CPU temperatures will be unavailable")
 		removeService(m)
 		os.Remove(tmpSys)
 		return false, nil
