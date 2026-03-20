@@ -61,6 +61,7 @@ func main() {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	defer collectors.CleanupRing0()
 
 	// Handle Ctrl+C
 	sigCh := make(chan os.Signal, 1)

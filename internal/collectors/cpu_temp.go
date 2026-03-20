@@ -74,34 +74,23 @@ type CPUTempCollector struct {
 
 func NewCPUTempCollector() *CPUTempCollector {
 	c := &CPUTempCollector{}
-	c.ring0OK = c.openDriver()
+	if ensureRing0() {
+		c.ring0OK = c.openHandle()
+	}
 	return c
 }
 
 func (c *CPUTempCollector) Name() string { return "cpu_temp" }
 
-// openDriver opens \\.\WinRing0_1_2_0 and reads TjMax for Intel.
-func (c *CPUTempCollector) openDriver() bool {
-	path, err := syscall.UTF16PtrFromString(olsDevicePath)
+// openHandle opens \\.\WinRing0_1_2_0 (driver must already be running).
+func (c *CPUTempCollector) openHandle() bool {
+	h, err := openRing0Device()
 	if err != nil {
+		log.Printf("cpu_temp: cannot open WinRing0 device: %v", err)
 		return false
 	}
-	h, err := windows.CreateFile(
-		path,
-		windows.GENERIC_READ|windows.GENERIC_WRITE,
-		0, nil,
-		windows.OPEN_EXISTING,
-		windows.FILE_ATTRIBUTE_NORMAL,
-		0,
-	)
-	if err != nil {
-		log.Printf("cpu_temp: WinRing0 driver not found (%v) — ACPI fallback", err)
-		return false
-	}
-
 	c.handle = h
 	c.vendor = detectCPUVendor()
-
 	if c.vendor == vendorIntel {
 		c.tjmax = c.readTjMax()
 		log.Printf("cpu_temp: Ring0 ready — Intel, TjMax=%d°C", c.tjmax)
@@ -109,6 +98,22 @@ func (c *CPUTempCollector) openDriver() bool {
 		log.Printf("cpu_temp: Ring0 ready — AMD Zen")
 	}
 	return true
+}
+
+// openRing0Device opens the WinRing0 kernel driver device.
+func openRing0Device() (windows.Handle, error) {
+	path, err := syscall.UTF16PtrFromString(olsDevicePath)
+	if err != nil {
+		return 0, err
+	}
+	return windows.CreateFile(
+		path,
+		windows.GENERIC_READ|windows.GENERIC_WRITE,
+		0, nil,
+		windows.OPEN_EXISTING,
+		windows.FILE_ATTRIBUTE_NORMAL,
+		0,
+	)
 }
 
 // readMSR sends IOCTL_OLS_READ_MSR to the WinRing0 driver.
