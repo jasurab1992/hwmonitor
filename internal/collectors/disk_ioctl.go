@@ -259,6 +259,7 @@ func EnumeratePhysicalDrives() []physicalDriveInfo {
 		consecutive = 0
 		info := queryDrive(h, i)
 		windows.CloseHandle(h)
+		enrichWithSmartctl(&info)
 		results = append(results, info)
 	}
 	return results
