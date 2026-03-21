@@ -1,0 +1,163 @@
+2026/03/21 16:33:34 ring0: device already present (external driver)
+2026/03/21 16:33:34 cpu_temp: Ring0 ready — Intel, TjMax=104°C
+2026/03/21 16:33:35 disk: using embedded smartctl
+2026/03/21 16:33:36 ipmi: using embedded ipmiutil
+2026/03/21 16:33:38 lhm: using embedded lhm_bridge
+╔══════════════════════════════════════════════════════════╗
+║           HWmonitor — Hardware Monitor                   ║
+╚══════════════════════════════════════════════════════════╝
+  Updated: 16:33:34    Press Ctrl+C to exit
+
+── System Info ──
+  CPU:         Intel(R) Xeon(R) Gold 6154 CPU @ 3.00GHz
+               18 cores / 36 threads
+  Motherboard: HUANANZHI X11D-16D
+  BIOS:        5.14
+  RAM:         384 GB total
+    Slot 0: 32 GB DDR4 @ 2666 MHz
+    Slot 1: 32 GB DDR4 @ 2666 MHz
+    Slot 2: 32 GB DDR4 @ 2666 MHz
+    Slot 3: 32 GB DDR4 @ 2666 MHz
+    Slot 4: 32 GB DDR4 @ 2666 MHz
+    Slot 5: 32 GB DDR4 @ 2666 MHz
+    Slot 6: 32 GB DDR4 @ 2666 MHz
+    Slot 7: 32 GB DDR4 @ 2666 MHz
+    Slot 8: 32 GB DDR4 @ 2666 MHz
+    Slot 9: 32 GB DDR4 @ 2666 MHz
+    Slot 10: 32 GB DDR4 @ 2666 MHz
+    Slot 11: 32 GB DDR4 @ 2666 MHz
+
+── CPU ──
+  Total Usage:  ░░░░░░░░░░░░░░░░░░░░░░░░░░░░   0.3%
+  Cores:        36
+  Frequency:    2993 MHz
+  Per-Core:
+    Core 0   ░░░░░░░░░░░░░░░░░░░░░░░░░░░░   0.0%
+    Core 1   ░░░░░░░░░░░░░░░░░░░░░░░░░░░░   0.0%
+    Core 2   ░░░░░░░░░░░░░░░░░░░░░░░░░░░░   0.0%
+    Core 3   ░░░░░░░░░░░░░░░░░░░░░░░░░░░░   1.6%
+    Core 4   ░░░░░░░░░░░░░░░░░░░░░░░░░░░░   1.6%
+    Core 5   ░░░░░░░░░░░░░░░░░░░░░░░░░░░░   0.0%
+    Core 6   ░░░░░░░░░░░░░░░░░░░░░░░░░░░░   0.0%
+    Core 7   ░░░░░░░░░░░░░░░░░░░░░░░░░░░░   0.0%
+    Core 8   ░░░░░░░░░░░░░░░░░░░░░░░░░░░░   0.0%
+    Core 9   ░░░░░░░░░░░░░░░░░░░░░░░░░░░░   0.0%
+    Core 10  ░░░░░░░░░░░░░░░░░░░░░░░░░░░░   0.0%
+    Core 11  ░░░░░░░░░░░░░░░░░░░░░░░░░░░░   0.0%
+    Core 12  ░░░░░░░░░░░░░░░░░░░░░░░░░░░░   1.6%
+    Core 13  ░░░░░░░░░░░░░░░░░░░░░░░░░░░░   0.0%
+    Core 14  ░░░░░░░░░░░░░░░░░░░░░░░░░░░░   0.0%
+    Core 15  ░░░░░░░░░░░░░░░░░░░░░░░░░░░░   0.0%
+    Core 16  ░░░░░░░░░░░░░░░░░░░░░░░░░░░░   1.6%
+    Core 17  ░░░░░░░░░░░░░░░░░░░░░░░░░░░░   0.0%
+    Core 18  ░░░░░░░░░░░░░░░░░░░░░░░░░░░░   0.0%
+    Core 19  ░░░░░░░░░░░░░░░░░░░░░░░░░░░░   0.0%
+    Core 20  ░░░░░░░░░░░░░░░░░░░░░░░░░░░░   1.6%
+    Core 21  ░░░░░░░░░░░░░░░░░░░░░░░░░░░░   0.0%
+    Core 22  ░░░░░░░░░░░░░░░░░░░░░░░░░░░░   0.0%
+    Core 23  ░░░░░░░░░░░░░░░░░░░░░░░░░░░░   0.0%
+    Core 24  ░░░░░░░░░░░░░░░░░░░░░░░░░░░░   0.0%
+    Core 25  ░░░░░░░░░░░░░░░░░░░░░░░░░░░░   1.6%
+    Core 26  ░░░░░░░░░░░░░░░░░░░░░░░░░░░░   0.0%
+    Core 27  ░░░░░░░░░░░░░░░░░░░░░░░░░░░░   0.0%
+    Core 28  ░░░░░░░░░░░░░░░░░░░░░░░░░░░░   0.0%
+    Core 29  ░░░░░░░░░░░░░░░░░░░░░░░░░░░░   0.0%
+    Core 30  ░░░░░░░░░░░░░░░░░░░░░░░░░░░░   0.0%
+    Core 31  ░░░░░░░░░░░░░░░░░░░░░░░░░░░░   0.0%
+    Core 32  ░░░░░░░░░░░░░░░░░░░░░░░░░░░░   0.0%
+    Core 33  ░░░░░░░░░░░░░░░░░░░░░░░░░░░░   0.0%
+    Core 34  ░░░░░░░░░░░░░░░░░░░░░░░░░░░░   0.0%
+    Core 35  ░░░░░░░░░░░░░░░░░░░░░░░░░░░░   0.0%
+
+── Memory ──
+  RAM:   █░░░░░░░░░░░░░░░░░░░░░░░░░░░   3.0%
+         Used: 12.6 GB / 382.7 GB  (Free: 370.0 GB)
+  Swap:  █░░░░░░░░░░░░░░░░░░░░░░░░░░░   3.0%
+         Used: 12.8 GB / 422.7 GB
+
+── Temperatures ──
+  CPU0: CPU Package (Intel Xeon Gold 6154) 30°C
+  CPU0: Core Max (Intel Xeon Gold 6154) 29°C
+  CPU0: Core Average (Intel Xeon Gold 6154) 28°C
+  CPU1: CPU Package (Intel Xeon Gold 6154) 30°C
+  CPU1: Core Max (Intel Xeon Gold 6154) 30°C
+  CPU1: Core Average (Intel Xeon Gold 6154) 29°C
+  NVMe Lexar SSD NM790 2TB       30°C
+  NVMe MSI M480 PRO 2TB          35°C
+  SATA TOSHIBA MD10ADA800V       31°C
+  SATA TOSHIBA HDWT840           28°C
+  SATA Samsung SSD 870 EVO 500GB 32°C
+  BMC Inlet                      28°C
+  BMC CPU0                       34°C
+  BMC Exhaust                    30°C
+  BMC CPU1                       33°C
+
+── Voltages ──
+  CPU0: CPU Core                 0.717 V
+  CPU1: CPU Core                 0.716 V
+  BMC P12V                       12.000 V
+  BMC P1V05_PCH                  1.040 V
+  BMC PVDDQ_ABC                  1.190 V
+  BMC PVDDQ_DEF                  1.200 V
+  BMC P1V8_PCH_AUX               1.820 V
+  BMC PVCCIN_CPU1                1.780 V
+  BMC P3V3                       3.400 V
+  BMC PVDDQ_KLM                  1.200 V
+  BMC P5V                        5.000 V
+  BMC PVDDQ_GHJ                  1.200 V
+  BMC PVCCIN_CPU0                1.780 V
+  BMC PVCCIO_CPU0                1.020 V
+  BMC PVCCIO_CPU1                1.020 V
+  BMC PVNN_PCH_AUX               0.990 V
+  BMC P3V_BAT                    3.000 V
+
+── Fans ──
+  BMC FAN2                       880 RPM
+  BMC FAN3                       1120 RPM
+  BMC FAN7                       2960 RPM
+  BMC FAN8                       2960 RPM
+
+── Disk ──
+  C:         ████░░░░░░░░░░░░░░░░░░░░░░░░  12.7%  (59.3 GB / 465.0 GB)
+  D:         ░░░░░░░░░░░░░░░░░░░░░░░░░░░░   0.0%  (163.4 MB / 1.9 TB)
+  E:         ░░░░░░░░░░░░░░░░░░░░░░░░░░░░   0.0%  (336.7 MB / 7.3 TB)
+  F:         ░░░░░░░░░░░░░░░░░░░░░░░░░░░░   0.0%  (162.0 MB / 1.8 TB)
+  G:         ░░░░░░░░░░░░░░░░░░░░░░░░░░░░   0.0%  (220.3 MB / 3.6 TB)
+  I/O totals:
+    C:           R: 7.3 GB      W: 70.7 GB
+    D:           R: 204.0 KB    W: 284.0 KB
+    E:           R: 200.0 KB    W: 284.0 KB
+    F:           R: 200.0 KB    W: 284.0 KB
+    G:           R: 200.0 KB    W: 284.0 KB
+
+── NVMe SMART ──
+  Lexar SSD NM790 2TB
+    Life remaining: 100%
+    Available spare:100%
+    Power On Hours: 607 h
+    Media errors:   0
+  MSI M480 PRO 2TB
+    Life remaining: 100%
+    Available spare:100%
+    Power On Hours: 4003 h
+    Media errors:   0
+
+── SATA SMART ──
+  Samsung SSD 870 EVO 500GB
+    Life remaining: 99%
+    Available spare:100%
+    Power On Hours: 617 h
+    Reallocated:    0 sectors
+  TOSHIBA HDWT840
+    Available spare:100%
+    Power On Hours: 617 h
+    Reallocated:    0 sectors
+    Pending:        0 sectors
+  TOSHIBA MD10ADA800V
+    Available spare:100%
+    Power On Hours: 617 h
+    Reallocated:    0 sectors
+    Pending:        0 sectors
+
+── Network ──
+  vEthernet (Realtek PCIe 2.5GbE Family Controller - Virtual Switch)  ↑ 24.7 GB     ↓ 6.0 GB

@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 
 	"github.com/yusufpapurcu/wmi"
 )
@@ -168,7 +169,9 @@ func (c *IPMICollector) Collect() ([]Metric, error) {
 //	SDR Full 01 01 22 a 01 snum 16 FAN2      = 0b OK 880.00 RPM
 //	SDR Full 01 01 23 a 01 snum 30 P12V      = 02 OK 12.00 Volts
 func runIpmiutil() ([]Metric, error) {
-	out, err := exec.Command(ipmiutilBin, "sensor").Output()
+	cmd := exec.Command(ipmiutilBin, "sensor")
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	out, err := cmd.Output()
 	if err != nil && len(out) == 0 {
 		return nil, err
 	}

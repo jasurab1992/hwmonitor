@@ -169,10 +169,30 @@ export namespace main {
 	        this.recvBytes = source["recvBytes"];
 	    }
 	}
+	export class RAMSlot {
+	    slot: string;
+	    bytes: number;
+	    type: string;
+	    speedMHz: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new RAMSlot(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.slot = source["slot"];
+	        this.bytes = source["bytes"];
+	        this.type = source["type"];
+	        this.speedMHz = source["speedMHz"];
+	    }
+	}
 	export class SATAEntry {
 	    device: string;
 	    lifeRemaining: number;
 	    hasLife: boolean;
+	    spareAvail: number;
+	    hasSpare: boolean;
 	    powerOnHours: number;
 	    hasHours: boolean;
 	    reallocated: number;
@@ -191,6 +211,8 @@ export namespace main {
 	        this.device = source["device"];
 	        this.lifeRemaining = source["lifeRemaining"];
 	        this.hasLife = source["hasLife"];
+	        this.spareAvail = source["spareAvail"];
+	        this.hasSpare = source["hasSpare"];
 	        this.powerOnHours = source["powerOnHours"];
 	        this.hasHours = source["hasHours"];
 	        this.reallocated = source["reallocated"];
@@ -236,6 +258,7 @@ export namespace main {
 	    motherboard: string;
 	    bios: string;
 	    ramTotal: number;
+	    ramSlots: RAMSlot[];
 	
 	    static createFrom(source: any = {}) {
 	        return new SysInfoData(source);
@@ -249,7 +272,26 @@ export namespace main {
 	        this.motherboard = source["motherboard"];
 	        this.bios = source["bios"];
 	        this.ramTotal = source["ramTotal"];
+	        this.ramSlots = this.convertValues(source["ramSlots"], RAMSlot);
 	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 	export class Snapshot {
 	    timestamp: number;

@@ -3,13 +3,15 @@ package collectors
 import (
 	"fmt"
 	"runtime"
-	"time"
+	"sync"
 
 	"github.com/shirou/gopsutil/v3/cpu"
 )
 
 // CPUCollector collects CPU usage, per-core usage, core count, and frequency.
-type CPUCollector struct{}
+type CPUCollector struct {
+	mu sync.Mutex
+}
 
 // NewCPUCollector creates a new CPUCollector.
 func NewCPUCollector() *CPUCollector {
@@ -21,12 +23,28 @@ func (c *CPUCollector) Name() string {
 }
 
 func (c *CPUCollector) Collect() ([]Metric, error) {
+	// Serialize access: gopsutil uses a global cache for interval=0 deltas.
+	// Without a mutex, overlapping calls (UI polls at 1s, Collect takes ~0ms)
+	// corrupt the shared state and produce bogus 100% readings.
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	var metrics []Metric
 
-	// Single call for per-core usage, then compute total as average
-	perCore, err := cpu.Percent(time.Second, true)
+	// interval=0: non-blocking, returns delta since last call.
+	// Avoids the 1-second blocking sleep that causes concurrent-call races.
+	perCore, err := cpu.Percent(0, true)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get CPU usage: %w", err)
+	}
+
+	// Clamp: gopsutil occasionally returns slightly out-of-range values.
+	for i, pct := range perCore {
+		if pct < 0 {
+			perCore[i] = 0
+		} else if pct > 100 {
+			perCore[i] = 100
+		}
 	}
 
 	// Compute total as average of all cores

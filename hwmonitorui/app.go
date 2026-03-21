@@ -79,6 +79,8 @@ type SATAEntry struct {
 	Device         string  `json:"device"`
 	LifeRemaining  float64 `json:"lifeRemaining"`
 	HasLife        bool    `json:"hasLife"`
+	SpareAvail     float64 `json:"spareAvail"`
+	HasSpare       bool    `json:"hasSpare"`
 	PowerOnHours   float64 `json:"powerOnHours"`
 	HasHours       bool    `json:"hasHours"`
 	Reallocated    float64 `json:"reallocated"`
@@ -95,13 +97,21 @@ type NetworkEntry struct {
 	RecvBytes float64 `json:"recvBytes"`
 }
 
+type RAMSlot struct {
+	Slot     string  `json:"slot"`
+	Bytes    float64 `json:"bytes"`
+	Type     string  `json:"type"`
+	SpeedMHz string  `json:"speedMHz"`
+}
+
 type SysInfoData struct {
-	CPU         string `json:"cpu"`
-	Cores       int    `json:"cores"`
-	Threads     int    `json:"threads"`
-	Motherboard string `json:"motherboard"`
-	BIOS        string `json:"bios"`
-	RAMTotal    float64 `json:"ramTotal"`
+	CPU         string    `json:"cpu"`
+	Cores       int       `json:"cores"`
+	Threads     int       `json:"threads"`
+	Motherboard string    `json:"motherboard"`
+	BIOS        string    `json:"bios"`
+	RAMTotal    float64   `json:"ramTotal"`
+	RAMSlots    []RAMSlot `json:"ramSlots"`
 }
 
 type Snapshot struct {
@@ -234,6 +244,12 @@ func buildSysInfo(m []collectors.Metric) SysInfoData {
 			s.BIOS = metric.Labels["version"]
 		case "sysinfo_memory_module_bytes":
 			s.RAMTotal += metric.Value
+			s.RAMSlots = append(s.RAMSlots, RAMSlot{
+				Slot:     metric.Labels["slot"],
+				Bytes:    metric.Value,
+				Type:     metric.Labels["type"],
+				SpeedMHz: metric.Labels["speed_mhz"],
+			})
 		}
 	}
 	return s
@@ -478,6 +494,9 @@ func buildSATA(m []collectors.Metric) []SATAEntry {
 		case "smart_life_remaining_percent":
 			e.LifeRemaining = metric.Value
 			e.HasLife = true
+		case "smart_spare_available_percent":
+			e.SpareAvail = metric.Value
+			e.HasSpare = true
 		case "smart_power_on_hours":
 			e.PowerOnHours = metric.Value
 			e.HasHours = true

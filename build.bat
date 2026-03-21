@@ -69,4 +69,22 @@ if %ERRORLEVEL% EQU 0 (
     echo BUILD OK
 ) else (
     echo BUILD FAILED
+    exit /b 1
+)
+
+:: ── Build hwmonitorui (Wails desktop dashboard) ───────────────────────────────
+if exist "hwmonitorui\wails.json" (
+    echo Building hwmonitorui...
+    pushd hwmonitorui
+    if defined TAGS (
+        wails build -tags "%TAGS%" >nul 2>&1
+    ) else (
+        wails build >nul 2>&1
+    )
+    if %ERRORLEVEL% EQU 0 (
+        echo hwmonitorui BUILD OK
+    ) else (
+        echo hwmonitorui BUILD FAILED
+    )
+    popd
 )

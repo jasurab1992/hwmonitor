@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sync"
+	"syscall"
 )
 
 // ─── smartctl JSON output structures ─────────────────────────────────────────
@@ -115,7 +116,9 @@ func collectSmartData(info *physicalDriveInfo) {
 		args = append([]string{"-d", "nvme"}, args...)
 	}
 
-	out, _ := exec.Command(smartctlBin, args...).Output()
+	cmd := exec.Command(smartctlBin, args...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	out, _ := cmd.Output()
 	if len(out) == 0 {
 		return
 	}

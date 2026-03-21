@@ -8,7 +8,9 @@ package collectors
 import (
 	"fmt"
 	"log"
+	"sync"
 	"syscall"
+	"time"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -113,9 +115,24 @@ type physicalDriveInfo struct {
 
 // ─── Enumeration ─────────────────────────────────────────────────────────────
 
+var (
+	drivesCacheMu   sync.Mutex
+	drivesCache     []physicalDriveInfo
+	drivesCacheTime time.Time
+	drivesCacheTTL  = 60 * time.Second
+)
+
 // EnumeratePhysicalDrives opens \\.\PhysicalDriveN, reads device identity and
 // temperature via IOCTL, then collects all SMART health data via smartctl.
+// Results are cached for 60 seconds to avoid running smartctl on every poll.
 func EnumeratePhysicalDrives() []physicalDriveInfo {
+	drivesCacheMu.Lock()
+	defer drivesCacheMu.Unlock()
+
+	if drivesCache != nil && time.Since(drivesCacheTime) < drivesCacheTTL {
+		return drivesCache
+	}
+
 	var results []physicalDriveInfo
 	consecutive := 0
 	for i := 0; i < 32; i++ {
@@ -143,6 +160,9 @@ func EnumeratePhysicalDrives() []physicalDriveInfo {
 		collectSmartData(&info)
 		results = append(results, info)
 	}
+
+	drivesCache = results
+	drivesCacheTime = time.Now()
 	return results
 }
 
