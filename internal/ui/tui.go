@@ -292,7 +292,7 @@ func renderTemperaturesSection(sb *strings.Builder, sensorsM, cpuTempM, nvmeM, s
 	for _, m := range ipmiM {
 		if m.Name == "ipmi_temperature_celsius" {
 			lines = append(lines, fmt.Sprintf("  %-30s %s%.0f°C%s",
-				m.Labels["sensor"], tempColor(m.Value), m.Value, colorReset))
+				"BMC "+ipmiSensorName(m.Labels["sensor"]), tempColor(m.Value), m.Value, colorReset))
 		}
 	}
 
@@ -709,6 +709,23 @@ func tempColor(temp float64) string {
 		return colorYellow
 	}
 	return colorGreen
+}
+
+// ipmiSensorName maps raw ipmiutil sensor names to human-readable labels.
+// Unknown names are returned as-is.
+func ipmiSensorName(raw string) string {
+	switch raw {
+	case "Sys_Temp1":
+		return "Inlet"
+	case "Sys_Temp2":
+		return "Exhaust"
+	case "CPU0_Temp":
+		return "CPU0"
+	case "CPU1_Temp":
+		return "CPU1"
+	default:
+		return raw
+	}
 }
 
 // lhmSocketIndex extracts the socket/device index from an LHM identifier.
