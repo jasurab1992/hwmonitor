@@ -475,7 +475,14 @@ func renderNVMeSmartSection(sb *strings.Builder, metrics []collectors.Metric) {
 	for _, dev := range devs {
 		info := devMap[dev]
 		sb.WriteString(fmt.Sprintf("  %s%s%s\n", colorBold, dev, colorReset))
-		sb.WriteString(fmt.Sprintf("    Wear used:      %.0f%%\n", info.used))
+		lifeRemaining := 100 - info.used
+		lifeColor := colorGreen
+		if lifeRemaining < 10 {
+			lifeColor = colorRed
+		} else if lifeRemaining < 30 {
+			lifeColor = colorYellow
+		}
+		sb.WriteString(fmt.Sprintf("    Life remaining: %s%.0f%%%s\n", lifeColor, lifeRemaining, colorReset))
 		if info.hasSpare {
 			spareColor := colorGreen
 			if info.spare < 10 {
