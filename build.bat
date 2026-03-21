@@ -38,6 +38,16 @@ if not exist "internal\collectors\drivers\lhm_bridge.exe" (
     )
 )
 
+:: ── Generate icon + Windows resource file (.syso) ────────────────────────────
+if not exist "hwmonitor.syso" (
+    if exist "assets\hwmonitor.ico" (
+        where rsrc >nul 2>&1 && rsrc -ico assets\hwmonitor.ico -o hwmonitor.syso >nul 2>&1 && echo icon.syso OK
+    ) else (
+        "C:\Program Files\Go\bin\go.exe" run cmd/genicon/main.go
+        where rsrc >nul 2>&1 && rsrc -ico assets\hwmonitor.ico -o hwmonitor.syso >nul 2>&1 && echo icon.syso OK
+    )
+)
+
 :: ── Assemble build tags ───────────────────────────────────────────────────────
 if exist "internal\collectors\drivers\smartctl.exe"  set TAGS=%TAGS%embed_smartctl,
 if exist "internal\collectors\drivers\ipmiutil\ipmiutil.exe"  set TAGS=%TAGS%embed_ipmiutil,
