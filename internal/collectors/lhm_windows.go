@@ -9,6 +9,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sync"
+	"syscall"
+	"time"
 )
 
 type lhmBridgeSensor struct {
@@ -25,6 +27,11 @@ var (
 	lhmBin     string
 	lhmReady   bool
 	lhmTempBin string
+
+	lhmCacheMu   sync.Mutex
+	lhmCache     []lhmBridgeSensor
+	lhmCacheTime time.Time
+	lhmCacheTTL  = 30 * time.Second
 )
 
 func initLHM() {
@@ -64,16 +71,28 @@ func collectLHMSensors() []lhmBridgeSensor {
 	if !lhmReady {
 		return nil
 	}
-	out, err := exec.Command(lhmBin).Output()
+
+	lhmCacheMu.Lock()
+	defer lhmCacheMu.Unlock()
+
+	if lhmCache != nil && time.Since(lhmCacheTime) < lhmCacheTTL {
+		return lhmCache
+	}
+
+	cmd := exec.Command(lhmBin)
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	out, err := cmd.Output()
 	if err != nil && len(out) == 0 {
 		log.Printf("lhm: lhm_bridge failed: %v", err)
-		return nil
+		return lhmCache // return stale cache on error rather than nothing
 	}
 	var sensors []lhmBridgeSensor
 	if err := json.Unmarshal(out, &sensors); err != nil {
 		log.Printf("lhm: JSON parse error: %v", err)
-		return nil
+		return lhmCache
 	}
+	lhmCache = sensors
+	lhmCacheTime = time.Now()
 	return sensors
 }
 

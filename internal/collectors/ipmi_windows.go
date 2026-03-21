@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/yusufpapurcu/wmi"
 )
@@ -28,6 +29,11 @@ var (
 	ipmiutilBin     string
 	ipmiutilReady   bool
 	ipmiutilTempBin string
+
+	ipmiCacheMu   sync.Mutex
+	ipmiCache     []Metric
+	ipmiCacheTime time.Time
+	ipmiCacheTTL  = 30 * time.Second
 )
 
 func initIpmiutil() {
@@ -147,18 +153,35 @@ func collectViaWMI() []Metric {
 }
 
 func (c *IPMICollector) Collect() ([]Metric, error) {
-	// First try native WMI IPMI provider (works on Windows Server with
-	// ipmidrv.sys — no external binary needed).
-	if wmiMetrics := collectViaWMI(); len(wmiMetrics) > 0 {
-		return wmiMetrics, nil
+	ipmiCacheMu.Lock()
+	defer ipmiCacheMu.Unlock()
+
+	if ipmiCache != nil && time.Since(ipmiCacheTime) < ipmiCacheTTL {
+		return ipmiCache, nil
 	}
 
-	// Fall back to ipmiutil if available.
+	var metrics []Metric
+
+	// Prefer ipmiutil — returns full sensor list (temps, fans, voltages).
+	// WMI IPMI only returns a partial set (drops inlet/exhaust sensors).
 	initIpmiutil()
-	if !ipmiutilReady {
-		return nil, nil
+	if ipmiutilReady {
+		m, err := runIpmiutil()
+		if err == nil && len(m) > 0 {
+			metrics = m
+		}
 	}
-	return runIpmiutil()
+
+	// Fall back to WMI if ipmiutil returned nothing (e.g. KCS busy or no admin).
+	if len(metrics) == 0 {
+		metrics = collectViaWMI()
+	}
+
+	if len(metrics) > 0 {
+		ipmiCache = metrics
+		ipmiCacheTime = time.Now()
+	}
+	return metrics, nil
 }
 
 // runIpmiutil runs `ipmiutil sensor` and parses all sensor readings.
