@@ -96,8 +96,8 @@ func (t *TUI) render() {
 	lhmM := allMetrics["lhm"]
 	renderTemperaturesSection(&sb, sensorsM, cpuTempM, nvmeM, smartM, ipmiM, lhmM)
 
-	renderVoltagesSection(&sb, sensorsM, lhmM)
-	renderFansSection(&sb, sensorsM, lhmM)
+	renderVoltagesSection(&sb, sensorsM, lhmM, ipmiM)
+	renderFansSection(&sb, sensorsM, lhmM, ipmiM)
 	if m, ok := allMetrics["disk"]; ok {
 		renderDiskSection(&sb, m)
 	}
@@ -306,7 +306,7 @@ func renderTemperaturesSection(sb *strings.Builder, sensorsM, cpuTempM, nvmeM, s
 	sb.WriteString("\n")
 }
 
-func renderVoltagesSection(sb *strings.Builder, sensorsM, lhmM []collectors.Metric) {
+func renderVoltagesSection(sb *strings.Builder, sensorsM, lhmM, ipmiM []collectors.Metric) {
 	var lines []string
 	for _, m := range sensorsM {
 		if m.Name == "sensor_voltage_volts" {
@@ -323,6 +323,11 @@ func renderVoltagesSection(sb *strings.Builder, sensorsM, lhmM []collectors.Metr
 			lines = append(lines, fmt.Sprintf("  %-30s %.3f V", prefix+name, m.Value))
 		}
 	}
+	for _, m := range ipmiM {
+		if m.Name == "ipmi_voltage_volts" {
+			lines = append(lines, fmt.Sprintf("  %-30s %.3f V", "BMC "+m.Labels["sensor"], m.Value))
+		}
+	}
 	if len(lines) == 0 {
 		return
 	}
@@ -333,7 +338,7 @@ func renderVoltagesSection(sb *strings.Builder, sensorsM, lhmM []collectors.Metr
 	sb.WriteString("\n")
 }
 
-func renderFansSection(sb *strings.Builder, sensorsM, lhmM []collectors.Metric) {
+func renderFansSection(sb *strings.Builder, sensorsM, lhmM, ipmiM []collectors.Metric) {
 	var lines []string
 	for _, m := range sensorsM {
 		if m.Name == "sensor_fan_rpm" && m.Value > 0 {
@@ -343,6 +348,11 @@ func renderFansSection(sb *strings.Builder, sensorsM, lhmM []collectors.Metric) 
 	for _, m := range lhmM {
 		if m.Name == "lhm_fan_rpm" && m.Value > 0 {
 			lines = append(lines, fmt.Sprintf("  %-30s %.0f RPM", m.Labels["name"], m.Value))
+		}
+	}
+	for _, m := range ipmiM {
+		if m.Name == "ipmi_fan_rpm" && m.Value > 0 {
+			lines = append(lines, fmt.Sprintf("  %-30s %.0f RPM", "BMC "+m.Labels["sensor"], m.Value))
 		}
 	}
 	if len(lines) == 0 {

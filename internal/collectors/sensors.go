@@ -3,7 +3,6 @@
 package collectors
 
 import (
-	"log"
 	"strings"
 
 	"github.com/yusufpapurcu/wmi"
@@ -43,7 +42,6 @@ func (s *SensorsCollector) Collect() ([]Metric, error) {
 		return metrics, nil
 	}
 
-	log.Printf("sensors: LibreHardwareMonitor/OpenHardwareMonitor not found — install LHM as a service for voltages and per-core temps")
 	return nil, nil
 }
 

@@ -41,4 +41,7 @@ lhm_bridge/publish3/
 *.pdb
 
 # Embedded driver binaries (built locally, not committed)
-internal/collectors/drivers/
+internal/collectors/drivers/ipmiutil/
+internal/collectors/drivers/smartctl.exe
+internal/collectors/drivers/lhm_bridge.exe
+internal/collectors/drivers/WinRing0x64.sys

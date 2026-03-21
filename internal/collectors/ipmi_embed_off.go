@@ -1,5 +1,7 @@
-//go:build !embed_ipmitool
+//go:build !embed_ipmiutil
 
 package collectors
 
-var ipmitoolEmbedded []byte
+import "embed"
+
+var ipmiutilFS embed.FS

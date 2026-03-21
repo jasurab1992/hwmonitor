@@ -1,8 +1,8 @@
-//go:build embed_ipmitool && windows
+//go:build embed_ipmiutil && windows
 
 package collectors
 
-import _ "embed"
+import "embed"
 
-//go:embed drivers/ipmitool.exe
-var ipmitoolEmbedded []byte
+//go:embed drivers/ipmiutil/ipmiutil.exe drivers/ipmiutil/ipmiutillib.dll drivers/ipmiutil/libeay32.dll drivers/ipmiutil/ssleay32.dll drivers/ipmiutil/showselmsg.dll
+var ipmiutilFS embed.FS

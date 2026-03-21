@@ -15,74 +15,102 @@ import (
 	"github.com/yusufpapurcu/wmi"
 )
 
-// IPMICollector collects BMC/IPMI sensor temperatures (inlet, outlet, ambient, etc.)
-// via ipmitool. It is a no-op if ipmitool is not installed.
+// IPMICollector collects BMC/IPMI sensor data (temperatures, fans, voltages)
+// via ipmiutil. Falls back to native Windows IPMI WMI provider if available.
 type IPMICollector struct{}
 
 func NewIPMICollector() *IPMICollector { return &IPMICollector{} }
 func (c *IPMICollector) Name() string  { return "ipmi" }
 
 var (
-	ipmitoolOnce    sync.Once
-	ipmitoolBin     string
-	ipmitoolReady   bool
-	ipmitoolTempBin string
+	ipmiutilOnce    sync.Once
+	ipmiutilBin     string
+	ipmiutilReady   bool
+	ipmiutilTempBin string
 )
 
-func initIpmitool() {
-	ipmitoolOnce.Do(func() {
-		// 1. Extract embedded binary (when built with -tags embed_ipmitool).
-		if len(ipmitoolEmbedded) > 0 {
-			tmp := filepath.Join(os.TempDir(), "hwmon_ipmitool.exe")
-			if err := os.WriteFile(tmp, ipmitoolEmbedded, 0700); err == nil {
-				ipmitoolBin = tmp
-				ipmitoolTempBin = tmp
-				ipmitoolReady = true
-				log.Printf("ipmi: using embedded ipmitool")
+func initIpmiutil() {
+	ipmiutilOnce.Do(func() {
+		// 1. Extract embedded binaries (when built with -tags embed_ipmiutil).
+		//    ipmiutil.exe depends on several DLLs — all must live in the same
+		//    directory so Windows DLL search finds them when launching the exe.
+		const embedDir = "drivers/ipmiutil"
+		if entries, err := ipmiutilFS.ReadDir(embedDir); err == nil && len(entries) > 0 {
+			dir := filepath.Join(os.TempDir(), "hwmon_ipmiutil")
+			if err := os.MkdirAll(dir, 0700); err == nil {
+				allOK := true
+				for _, e := range entries {
+					data, err := ipmiutilFS.ReadFile(embedDir + "/" + e.Name())
+					if err != nil {
+						continue
+					}
+					if err := os.WriteFile(filepath.Join(dir, e.Name()), data, 0700); err != nil {
+						allOK = false
+						break
+					}
+				}
+				if allOK {
+					ipmiutilBin = filepath.Join(dir, "ipmiutil.exe")
+					ipmiutilTempBin = dir
+					ipmiutilReady = true
+					log.Printf("ipmi: using embedded ipmiutil")
+					return
+				}
+			}
+		}
+
+		// 2. Look next to the running executable (so ipmiutil.exe + DLLs can
+		//    live in the same directory as hwmonitor.exe without PATH changes).
+		if exe, err := os.Executable(); err == nil {
+			candidate := filepath.Join(filepath.Dir(exe), "ipmiutil.exe")
+			if _, err := os.Stat(candidate); err == nil {
+				ipmiutilBin = candidate
+				ipmiutilReady = true
+				log.Printf("ipmi: ipmiutil found at %s", candidate)
 				return
 			}
 		}
 
-		// 2. Fall back to PATH and common install locations.
+		// 3. Fall back to PATH and common install locations.
 		candidates := []string{
-			"ipmitool",
-			`C:\Program Files\ipmitool\ipmitool.exe`,
-			`C:\Program Files (x86)\ipmitool\ipmitool.exe`,
-			`C:\ipmitool\ipmitool.exe`,
+			"ipmiutil",
+			`C:\Program Files\ipmiutil\ipmiutil.exe`,
+			`C:\Program Files (x86)\ipmiutil\ipmiutil.exe`,
+			`C:\ipmiutil\ipmiutil.exe`,
 		}
 		for _, c := range candidates {
 			if path, err := exec.LookPath(c); err == nil {
-				ipmitoolBin = path
-				ipmitoolReady = true
-				log.Printf("ipmi: ipmitool found at %s", path)
+				ipmiutilBin = path
+				ipmiutilReady = true
+				log.Printf("ipmi: ipmiutil found at %s", path)
 				return
 			}
 			if _, err := os.Stat(c); err == nil {
-				ipmitoolBin = c
-				ipmitoolReady = true
-				log.Printf("ipmi: ipmitool found at %s", c)
+				ipmiutilBin = c
+				ipmiutilReady = true
+				log.Printf("ipmi: ipmiutil found at %s", c)
 				return
 			}
 		}
-		log.Printf("ipmi: ipmitool not found — install for BMC/ambient temperatures")
+		log.Printf("ipmi: ipmiutil not found — place ipmiutil.exe (+ ipmiutillib.dll) next to hwmonitor.exe for BMC sensor data")
 	})
 }
 
-// CleanupIPMI removes the temporary extracted ipmitool.exe (if any).
+// CleanupIPMI removes the temporary extracted ipmiutil directory (if any).
 func CleanupIPMI() {
-	if ipmitoolTempBin != "" {
-		os.Remove(ipmitoolTempBin)
+	if ipmiutilTempBin != "" {
+		os.RemoveAll(ipmiutilTempBin)
 	}
 }
 
 // msIPMISensor is a WMI record from root\WMI MSIPMISensor (available when
-// ipmidrv.sys is loaded on Windows Server — no ipmitool needed).
+// ipmidrv.sys is loaded on Windows Server — no external binary needed).
 type msIPMISensor struct {
-	SensorName   string
-	SensorType   uint32
+	SensorName     string
+	SensorType     uint32
 	CurrentReading uint32
-	UnitType     uint32
-	IsValid      bool
+	UnitType       uint32
+	IsValid        bool
 }
 
 // collectViaWMI queries the Windows IPMI WMI provider directly.
@@ -124,30 +152,23 @@ func (c *IPMICollector) Collect() ([]Metric, error) {
 		return wmiMetrics, nil
 	}
 
-	// Fall back to ipmitool if available.
-	initIpmitool()
-	if !ipmitoolReady {
+	// Fall back to ipmiutil if available.
+	initIpmiutil()
+	if !ipmiutilReady {
 		return nil, nil
 	}
-
-	// Try Microsoft IPMI WMI interface first (built into Windows Server when
-	// ipmidrv.sys is loaded — no extra driver install needed on most servers).
-	metrics, _ := runIpmitool("-I", "ms", "sdr", "type", "Temperature")
-	if len(metrics) == 0 {
-		// Fall back to auto-detected interface.
-		metrics, _ = runIpmitool("sdr", "type", "Temperature")
-	}
-	return metrics, nil
+	return runIpmiutil()
 }
 
-// runIpmitool runs ipmitool with the given args and parses temperature sensors.
-// ipmitool `sdr type Temperature` output format:
+// runIpmiutil runs `ipmiutil sensor` and parses all sensor readings.
 //
-//	Inlet Temp       | 28 degrees C  | ok
-//	CPU Temp         | 40 degrees C  | ok
-//	Inlet Temp       | no reading    | ns
-func runIpmitool(args ...string) ([]Metric, error) {
-	out, err := exec.Command(ipmitoolBin, args...).Output()
+// ipmiutil sensor output format:
+//
+//	SDR Full 01 01 20 a 01 snum 06 Sys_Temp1 = 1c OK 28.00 degrees C
+//	SDR Full 01 01 22 a 01 snum 16 FAN2      = 0b OK 880.00 RPM
+//	SDR Full 01 01 23 a 01 snum 30 P12V      = 02 OK 12.00 Volts
+func runIpmiutil() ([]Metric, error) {
+	out, err := exec.Command(ipmiutilBin, "sensor").Output()
 	if err != nil && len(out) == 0 {
 		return nil, err
 	}
@@ -155,34 +176,87 @@ func runIpmitool(args ...string) ([]Metric, error) {
 	var metrics []Metric
 	scanner := bufio.NewScanner(strings.NewReader(string(out)))
 	for scanner.Scan() {
-		line := scanner.Text()
-		parts := strings.Split(line, "|")
-		if len(parts) < 3 {
+		name, unit, value, ok := parseIpmiutilLine(scanner.Text())
+		if !ok {
 			continue
 		}
-
-		name := strings.TrimSpace(parts[0])
-		rawVal := strings.TrimSpace(parts[1])
-		status := strings.TrimSpace(parts[2])
-
-		// Skip sensors with no reading or not-ok status.
-		if status != "ok" || strings.Contains(rawVal, "no reading") || strings.Contains(rawVal, "Disabled") {
-			continue
+		switch {
+		case strings.Contains(unit, "degrees C"):
+			// Skip control/offset registers — not real temperatures.
+			if strings.Contains(strings.ToLower(name), "tcontrol") {
+				continue
+			}
+			if value >= -50 && value <= 200 {
+				metrics = append(metrics, Metric{
+					Name:   "ipmi_temperature_celsius",
+					Value:  value,
+					Labels: map[string]string{"sensor": name},
+				})
+			}
+		case strings.Contains(unit, "RPM"):
+			if value >= 0 {
+				metrics = append(metrics, Metric{
+					Name:   "ipmi_fan_rpm",
+					Value:  value,
+					Labels: map[string]string{"sensor": name},
+				})
+			}
+		case strings.Contains(unit, "Volts"):
+			metrics = append(metrics, Metric{
+				Name:   "ipmi_voltage_volts",
+				Value:  value,
+				Labels: map[string]string{"sensor": name},
+			})
 		}
-
-		// Parse "28 degrees C" or "28.00 degrees C".
-		rawVal = strings.ReplaceAll(rawVal, "degrees C", "")
-		rawVal = strings.TrimSpace(rawVal)
-		val, err := strconv.ParseFloat(rawVal, 64)
-		if err != nil || val < -50 || val > 200 {
-			continue
-		}
-
-		metrics = append(metrics, Metric{
-			Name:  "ipmi_temperature_celsius",
-			Value: val,
-			Labels: map[string]string{"sensor": name},
-		})
 	}
 	return metrics, nil
+}
+
+// parseIpmiutilLine extracts (name, unit, value) from one ipmiutil sensor line.
+// Expected format: ... <name> = <hex> <status> <float> <units...>
+func parseIpmiutilLine(line string) (name, unit string, value float64, valid bool) {
+	// Work with ASCII only — ipmiutil may embed non-printable bytes in names.
+	line = sanitizeASCII(line)
+
+	eqIdx := strings.Index(line, " = ")
+	if eqIdx < 0 {
+		return
+	}
+	// Sensor name is the last word before " = "
+	prefixFields := strings.Fields(line[:eqIdx])
+	if len(prefixFields) == 0 {
+		return
+	}
+	name = prefixFields[len(prefixFields)-1]
+	if name == "" {
+		return
+	}
+
+	// After " = ": hex_reading status float_value units...
+	rest := strings.Fields(line[eqIdx+3:])
+	if len(rest) < 4 {
+		return
+	}
+	// rest[0] = hex reading, rest[1] = status, rest[2] = value, rest[3+] = units
+	if !strings.EqualFold(rest[1], "OK") {
+		return
+	}
+	val, err := strconv.ParseFloat(rest[2], 64)
+	if err != nil {
+		return
+	}
+	return name, strings.Join(rest[3:], " "), val, true
+}
+
+// sanitizeASCII strips non-printable and non-ASCII bytes from s,
+// keeping spaces and printable ASCII (0x20–0x7E).
+func sanitizeASCII(s string) string {
+	b := make([]byte, 0, len(s))
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c >= 0x20 && c <= 0x7E {
+			b = append(b, c)
+		}
+	}
+	return string(b)
 }

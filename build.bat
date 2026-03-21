@@ -16,13 +16,10 @@ if not exist "internal\collectors\drivers\smartctl.exe" (
     )
 )
 
-:: ── ipmitool: no pre-built Windows binary is published by the ipmitool project ─
-:: ── Install manually if IPMI/BMC ambient temps are needed:                      ─
-:: ──   https://github.com/ipmitool/ipmitool (build from source)               ─
-:: ──   or use vendor tools (Dell DRAC, HPE iLO) which may include ipmitool.exe ─
-if not exist "internal\collectors\drivers\ipmitool.exe" (
-    echo NOTE: ipmitool.exe not found - IPMI ambient temperature collection disabled.
-    echo       Place ipmitool.exe in internal\collectors\drivers\ to enable.
+:: ── ipmiutil: place extracted zip in drivers\ipmiutil\ to enable BMC sensor data ──
+if not exist "internal\collectors\drivers\ipmiutil\ipmiutil.exe" (
+    echo NOTE: drivers\ipmiutil\ipmiutil.exe not found - IPMI/BMC sensor data disabled.
+    echo       Extract ipmiutil Windows zip to internal\collectors\drivers\ipmiutil\
 )
 
 :: ── Build lhm_bridge (C# LibreHardwareMonitor bridge) ────────────────────────
@@ -43,7 +40,7 @@ if not exist "internal\collectors\drivers\lhm_bridge.exe" (
 
 :: ── Assemble build tags ───────────────────────────────────────────────────────
 if exist "internal\collectors\drivers\smartctl.exe"  set TAGS=%TAGS%embed_smartctl,
-if exist "internal\collectors\drivers\ipmitool.exe"  set TAGS=%TAGS%embed_ipmitool,
+if exist "internal\collectors\drivers\ipmiutil\ipmiutil.exe"  set TAGS=%TAGS%embed_ipmiutil,
 if exist "internal\collectors\drivers\lhm_bridge.exe" set TAGS=%TAGS%embed_lhm,
 
 :: Strip trailing comma
